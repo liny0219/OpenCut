@@ -116,10 +116,10 @@ export class ScenesManager {
 	}
 
 	isBookmarked({ time }: { time: MediaTime }): boolean {
-		const activeScene = this.getActiveScene();
-		const activeProject = this.editor.project.getActive();
+		const activeScene = this.getActiveSceneOrNull();
+		const activeProject = this.editor.project.getActiveOrNull();
 
-		if (!activeScene || !this.active || !activeProject) return false;
+		if (!activeScene || !activeProject) return false;
 
 		const frameTime = getFrameTime({
 			time,

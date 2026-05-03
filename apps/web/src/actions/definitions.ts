@@ -152,6 +152,18 @@ export const ACTIONS = {
 
 export type TAction = keyof typeof ACTIONS;
 
+/** 快捷键只能绑定「无参或可省略参数」的动作（见 types.TActionWithOptionalArgs） */
+const NOT_SHORTCUTTABLE_ACTIONS = new Set<TAction>([
+	"remove-media-asset",
+	"remove-media-assets",
+]);
+
+export function isActionWithOptionalArgs(
+	value: string,
+): value is TActionWithOptionalArgs {
+	return value in ACTIONS && !NOT_SHORTCUTTABLE_ACTIONS.has(value as TAction);
+}
+
 const ACTION_DEFAULT_SHORTCUTS = [
 	["toggle-play", ["space", "k"]],
 	["seek-forward", ["l"]],

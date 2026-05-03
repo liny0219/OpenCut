@@ -79,7 +79,9 @@ export function TimelineBookmarksRow({
 	handleRulerTrackingMouseDown,
 	handleRulerMouseDown,
 }: TimelineBookmarksRowProps) {
-	const bookmarks = useEditor((e) => e.scenes.getActiveScene().bookmarks);
+	const bookmarks = useEditor(
+		(e) => e.scenes.getActiveSceneOrNull()?.bookmarks ?? [],
+	);
 
 	return (
 		<div

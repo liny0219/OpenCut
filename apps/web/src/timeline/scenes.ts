@@ -1,8 +1,22 @@
-import type { TScene } from "@/timeline";
+import type { SceneTracks, TScene } from "@/timeline";
 import { generateUUID } from "@/utils/id";
 import { calculateTotalDuration } from "@/timeline";
 import { MAIN_TRACK_NAME } from "@/timeline/placement/main-track";
 import { type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
+
+/** Stable placeholder when no scene is active (e.g. project hydrate). Do not mutate. */
+export const EMPTY_SCENE_TRACKS: SceneTracks = {
+	overlay: [],
+	main: {
+		id: "opencut-empty-main-track",
+		name: MAIN_TRACK_NAME,
+		type: "video",
+		elements: [],
+		muted: false,
+		hidden: false,
+	},
+	audio: [],
+};
 
 export function getMainScene({ scenes }: { scenes: TScene[] }): TScene | null {
 	return scenes.find((scene) => scene.isMain) || null;

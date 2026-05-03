@@ -9,6 +9,7 @@ import {
 	TransformHandleController,
 	type TransformHandleDeps,
 } from "@/preview/controllers/transform-handle-controller";
+import { EMPTY_SCENE_TRACKS } from "@/timeline/scenes";
 
 export function useTransformHandles({
 	onSnapLinesChange,
@@ -20,7 +21,10 @@ export function useTransformHandles({
 	const isShiftHeldRef = useShiftKey();
 	const selectedElements = useEditor((e) => e.selection.getSelectedElements());
 	const tracks = useEditor(
-		(e) => e.timeline.getPreviewTracks() ?? e.scenes.getActiveScene().tracks,
+		(e) =>
+			e.timeline.getPreviewTracks() ??
+			e.scenes.getActiveSceneOrNull()?.tracks ??
+			EMPTY_SCENE_TRACKS,
 	);
 	const currentTime = useEditor((e) => e.playback.getCurrentTime());
 	const mediaAssets = useEditor((e) => e.media.getAssets());

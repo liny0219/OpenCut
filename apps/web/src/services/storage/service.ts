@@ -167,6 +167,25 @@ class StorageService {
 		});
 	}
 
+	/** NT 等宿主注入已序列化工程（须符合 IndexedDB 中存盘格式） */
+	async setSerializedProject({
+		id,
+		serialized,
+	}: {
+		id: string;
+		serialized: SerializedProject;
+	}): Promise<void> {
+		await this.ensureMigrations();
+		const withId = {
+			...serialized,
+			metadata: {
+				...serialized.metadata,
+				id,
+			},
+		};
+		await this.projectsAdapter.set({ key: id, value: withId });
+	}
+
 	async loadProject({
 		id,
 	}: {

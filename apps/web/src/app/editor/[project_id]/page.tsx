@@ -16,7 +16,6 @@ import { Onboarding } from "@/components/editor/onboarding";
 import { MigrationDialog } from "@/project/components/migration-dialog";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
-import { MobileGate } from "@/components/editor/mobile-gate";
 import { useMemo, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
@@ -34,14 +33,16 @@ import {
 	bookmarkNotesPreviewOverlay,
 	getBookmarkPreviewOverlaySource,
 } from "@/timeline/bookmarks/index";
+import { NtEmbedBridge } from "@/components/editor/nt-embed-bridge";
 
 export default function Editor() {
 	const params = useParams();
 	const projectId = params.project_id as string;
 
 	return (
-		<MobileGate>
+		<>
 			<EditorProvider projectId={projectId}>
+				<NtEmbedBridge projectId={projectId} />
 				<div className="bg-background flex h-screen w-screen flex-col overflow-hidden">
 					<DegradedRendererBanner />
 					<EditorHeader />
@@ -53,7 +54,7 @@ export default function Editor() {
 					<ChangelogNotification />
 				</div>
 			</EditorProvider>
-		</MobileGate>
+		</>
 	);
 }
 

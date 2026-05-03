@@ -35,6 +35,15 @@ import {
 import { useEditor } from "@/editor/use-editor";
 import { DEFAULT_EXPORT_OPTIONS } from "@/export/defaults";
 
+/** NT iframe：与 nt-embed-bridge 的 parentOrigin 一致 */
+function getNtEmbedParentTarget(): string | null {
+	if (typeof window === "undefined") return null;
+	const sp = new URLSearchParams(window.location.search);
+	if (sp.get("embed") !== "1") return null;
+	const raw = sp.get("parentOrigin");
+	return raw && raw.length > 0 ? raw : "*";
+}
+
 function isExportFormat(value: string): value is ExportFormat {
 	return EXPORT_FORMAT_VALUES.some((formatValue) => formatValue === value);
 }
@@ -129,11 +138,32 @@ function ExportPopover({
 		}
 
 		if (result.success && result.buffer) {
-			downloadBuffer({
-				buffer: result.buffer,
-				filename: `${activeProject.metadata.name}${getExportFileExtension({ format })}`,
-				mimeType: getExportMimeType({ format }),
-			});
+			const filename = `${activeProject.metadata.name}${getExportFileExtension({ format })}`;
+			const mimeType = getExportMimeType({ format });
+			const parentTarget = getNtEmbedParentTarget();
+
+			if (parentTarget != null && window.parent !== window) {
+				const transferable = result.buffer.slice(0);
+				window.parent.postMessage(
+					{
+						type: "OPENCUT_EXPORT_BLOB",
+						source: "opencut",
+						sessionId: activeProject.metadata.id,
+						fileName: filename,
+						mimeType,
+						byteSize: transferable.byteLength,
+						buffer: transferable,
+					},
+					parentTarget,
+					[transferable],
+				);
+			} else {
+				downloadBuffer({
+					buffer: result.buffer,
+					filename,
+					mimeType,
+				});
+			}
 
 			editor.project.clearExportState();
 			onOpenChange(false);

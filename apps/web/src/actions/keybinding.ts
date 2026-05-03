@@ -13,6 +13,17 @@ export type ModifierKeys =
 	| "ctrl+alt"
 	| "ctrl+alt+shift";
 
+/** Longer prefixes first so e.g. ctrl+alt+shift+a matches the full modifier chain */
+const MODIFIER_PREFIXES: readonly ModifierKeys[] = [
+	"ctrl+alt+shift",
+	"ctrl+shift",
+	"alt+shift",
+	"ctrl+alt",
+	"ctrl",
+	"alt",
+	"shift",
+];
+
 const KEYS = [
 	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
 	"k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
@@ -37,6 +48,18 @@ export type ModifierBasedShortcutKey = `${ModifierKeys}+${Key}`;
 export type SingleCharacterShortcutKey = `${Key}`;
 
 export type ShortcutKey = ModifierBasedShortcutKey | SingleCharacterShortcutKey;
+
+export function isShortcutKey(value: string): value is ShortcutKey {
+	if (isKey(value)) return true;
+	for (const mod of MODIFIER_PREFIXES) {
+		const prefix = `${mod}+`;
+		if (value.startsWith(prefix)) {
+			const rest = value.slice(prefix.length);
+			if (isKey(rest)) return true;
+		}
+	}
+	return false;
+}
 
 export type KeybindingConfig = {
 	[key in ShortcutKey]?: TActionWithOptionalArgs;

@@ -54,7 +54,24 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 					(err.message.includes("not found") ||
 						err.message.includes("does not exist"));
 
-				if (isNotFound) {
+				const embed =
+					typeof window !== "undefined" &&
+					new URLSearchParams(window.location.search).get("embed") === "1";
+
+				if (isNotFound && embed) {
+					try {
+						await editor.project.createNewProjectWithFixedId({
+							id: projectId,
+							name: "Untitled Project",
+						});
+						if (cancelled) return;
+						setIsLoading(false);
+						loadFontAtlas();
+					} catch (_createErr) {
+						setError("Failed to create project");
+						setIsLoading(false);
+					}
+				} else if (isNotFound) {
 					try {
 						const newProjectId = await editor.project.createNewProject({
 							name: "Untitled Project",

@@ -79,6 +79,57 @@ export class ProjectManager {
 		await this.storageMigrationPromise;
 	}
 
+	/** 宿主 iframe 固定 URL 中的工程 id（与 NT opencut sessionId 对齐） */
+	async createNewProjectWithFixedId({
+		id,
+		name,
+	}: {
+		id: string;
+		name: string;
+	}): Promise<string> {
+		const mainScene = buildDefaultScene({ name: "Main scene", isMain: true });
+		const newProject: TProject = {
+			metadata: {
+				id,
+				name,
+				duration: getProjectDurationFromScenes({ scenes: [mainScene] }),
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+			scenes: [mainScene],
+			currentSceneId: mainScene.id,
+			settings: {
+				fps: DEFAULT_FPS,
+				canvasSize: DEFAULT_CANVAS_SIZE,
+				canvasSizeMode: "preset",
+				lastCustomCanvasSize: null,
+				originalCanvasSize: null,
+				background: {
+					type: "color",
+					color: DEFAULT_BACKGROUND_COLOR,
+				},
+			},
+			version: CURRENT_PROJECT_VERSION,
+		};
+
+		this.active = newProject;
+		this.notify();
+		this.editor.media.clearAllAssets();
+		this.editor.scenes.initializeScenes({
+			scenes: newProject.scenes,
+			currentSceneId: newProject.currentSceneId,
+		});
+
+		try {
+			await storageService.saveProject({ project: newProject });
+			this.updateMetadata(newProject);
+			return id;
+		} catch (error) {
+			toast.error("Failed to save new project");
+			throw error;
+		}
+	}
+
 	async createNewProject({ name }: { name: string }): Promise<string> {
 		const mainScene = buildDefaultScene({ name: "Main scene", isMain: true });
 		const newProject: TProject = {

@@ -11,6 +11,7 @@ import type {
 import { calculateTotalDuration } from "@/timeline";
 import { TimelineDragSource } from "@/timeline/drag-source";
 import { findTrackInSceneTracks } from "@/timeline/track-element-update";
+import { EMPTY_SCENE_TRACKS } from "@/timeline/scenes";
 import { lastFrameMediaTime, type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import {
 	canElementBeHidden,
@@ -868,6 +869,11 @@ export class TimelineManager {
 			this.editor.scenes.getActiveSceneOrNull()?.tracks ??
 			null
 		);
+	}
+
+	/** Preview tracks, or active scene tracks, or a read-only empty placeholder if none yet. */
+	getPreviewTracksOrEmpty(): SceneTracks {
+		return this.getPreviewTracks() ?? EMPTY_SCENE_TRACKS;
 	}
 
 	subscribe(listener: () => void): () => void {

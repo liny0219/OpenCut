@@ -14,10 +14,8 @@ import {
 
 export function useGraphEditorController() {
 	const editor = useEditor();
-	const renderTracks = useEditor(
-		(currentEditor) =>
-			currentEditor.timeline.getPreviewTracks() ??
-			currentEditor.scenes.getActiveScene().tracks,
+	const renderTracks = useEditor((currentEditor) =>
+		currentEditor.timeline.getPreviewTracksOrEmpty(),
 	);
 	const { selectedKeyframes } = useKeyframeSelection();
 	const [open, setOpen] = useState(false);

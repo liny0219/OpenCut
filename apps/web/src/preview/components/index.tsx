@@ -95,7 +95,7 @@ export function PreviewPanel({
 function RenderTreeController() {
 	const editor = useEditor();
 	const tracks = useEditor(
-		(e) => e.timeline.getPreviewTracks() ?? e.scenes.getActiveScene().tracks,
+		(e) => e.timeline.getPreviewTracksOrEmpty(),
 	);
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 	const activeProject = useEditor((e) => e.project.getActive());
