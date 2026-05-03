@@ -1,4 +1,8 @@
-import type { SceneTracks, TimelineElement } from "@/timeline";
+import type {
+	SceneTracks,
+	TimelineElement,
+	VideoElement,
+} from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { STICKER_INTRINSIC_SIZE_FALLBACK } from "@/stickers/intrinsic-size";
 import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
@@ -8,6 +12,14 @@ import {
 } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
+import {
+	clampNormalizedSourceCrop,
+	normalizedCropToPixelRect,
+	readNormalizedSourceCropFromParams,
+	type CropHandleKind,
+	type NormalizedSourceCrop,
+} from "@/rendering/source-crop";
+import { videoCache } from "@/services/video-cache/service";
 
 export interface ElementBounds {
 	cx: number;
@@ -122,7 +134,44 @@ function getElementBounds({
 
 	const { width: canvasWidth, height: canvasHeight } = canvasSize;
 
-	if (element.type === "video" || element.type === "image") {
+	if (element.type === "video") {
+		const transform = resolveTransformAtTime({
+			baseTransform: buildTransformFromParams({ params: element.params }),
+			animations: element.animations,
+			localTime,
+		});
+		const crop = readNormalizedSourceCropFromParams({
+			params: element.params,
+		});
+		const decoded = videoCache.getDecodedCanvasSize({
+			mediaId: element.mediaId,
+		});
+		let sourceWidth: number;
+		let sourceHeight: number;
+		if (decoded) {
+			const px = normalizedCropToPixelRect({
+				crop,
+				fullWidth: decoded.width,
+				fullHeight: decoded.height,
+			});
+			sourceWidth = px.width;
+			sourceHeight = px.height;
+		} else {
+			const iw = mediaAsset?.width ?? canvasWidth;
+			const ih = mediaAsset?.height ?? canvasHeight;
+			sourceWidth = iw * crop.width;
+			sourceHeight = ih * crop.height;
+		}
+		return getVisualElementBounds({
+			canvasWidth,
+			canvasHeight,
+			sourceWidth,
+			sourceHeight,
+			transform,
+		});
+	}
+
+	if (element.type === "image") {
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
 			animations: element.animations,
@@ -196,6 +245,211 @@ function getElementBounds({
 	}
 
 	return null;
+}
+
+function getVideoIntrinsicDimensionsForBounds({
+	element,
+	canvasSize,
+	mediaAsset,
+}: {
+	element: Extract<TimelineElement, { type: "video" }>;
+	canvasSize: { width: number; height: number };
+	mediaAsset?: MediaAsset | null;
+}): { width: number; height: number } {
+	const { width: canvasWidth, height: canvasHeight } = canvasSize;
+	const decoded = videoCache.getDecodedCanvasSize({
+		mediaId: element.mediaId,
+	});
+	if (decoded) {
+		return decoded;
+	}
+	return {
+		width: mediaAsset?.width ?? canvasWidth,
+		height: mediaAsset?.height ?? canvasHeight,
+	};
+}
+
+export function getVideoFullFrameBounds({
+	element,
+	canvasSize,
+	mediaAsset,
+	localTime,
+}: {
+	element: VideoElement;
+	canvasSize: { width: number; height: number };
+	mediaAsset: MediaAsset | null | undefined;
+	localTime: number;
+}): ElementBounds | null {
+	if ("hidden" in element && element.hidden) return null;
+	const { width: canvasWidth, height: canvasHeight } = canvasSize;
+	const transform = resolveTransformAtTime({
+		baseTransform: buildTransformFromParams({ params: element.params }),
+		animations: element.animations,
+		localTime,
+	});
+	const { width: sourceWidth, height: sourceHeight } =
+		getVideoIntrinsicDimensionsForBounds({
+			element,
+			canvasSize,
+			mediaAsset,
+		});
+	return getVisualElementBounds({
+		canvasWidth,
+		canvasHeight,
+		sourceWidth,
+		sourceHeight,
+		transform,
+	});
+}
+
+/**
+ * Visible layout bounds for a video element with an explicit source crop (same
+ * model as the compositor: center is transform center, size follows cropped
+ * source + contain scale).
+ */
+export function getVideoVisibleBoundsForCrop({
+	element,
+	canvasSize,
+	mediaAsset,
+	localTime,
+	crop,
+}: {
+	element: VideoElement;
+	canvasSize: { width: number; height: number };
+	mediaAsset: MediaAsset | null | undefined;
+	localTime: number;
+	crop: NormalizedSourceCrop;
+}): ElementBounds | null {
+	if ("hidden" in element && element.hidden) return null;
+	const { width: canvasWidth, height: canvasHeight } = canvasSize;
+	const transform = resolveTransformAtTime({
+		baseTransform: buildTransformFromParams({ params: element.params }),
+		animations: element.animations,
+		localTime,
+	});
+	const c = clampNormalizedSourceCrop({ crop });
+	const decoded = videoCache.getDecodedCanvasSize({
+		mediaId: element.mediaId,
+	});
+	let sourceWidth: number;
+	let sourceHeight: number;
+	if (decoded) {
+		const px = normalizedCropToPixelRect({
+			crop: c,
+			fullWidth: decoded.width,
+			fullHeight: decoded.height,
+		});
+		sourceWidth = px.width;
+		sourceHeight = px.height;
+	} else {
+		const iw = mediaAsset?.width ?? canvasWidth;
+		const ih = mediaAsset?.height ?? canvasHeight;
+		sourceWidth = iw * c.width;
+		sourceHeight = ih * c.height;
+	}
+	return getVisualElementBounds({
+		canvasWidth,
+		canvasHeight,
+		sourceWidth,
+		sourceHeight,
+		transform,
+	});
+}
+
+/**
+ * When source crop changes but transform.position stays fixed, the layer
+ * resizes around its center. Return the delta to add to transform.position
+ * (canvas space) so the opposite edge / corner stays fixed for this handle.
+ */
+export function computeCropTransformCompensation({
+	kind,
+	before,
+	after,
+}: {
+	kind: CropHandleKind;
+	before: ElementBounds;
+	after: ElementBounds;
+}): { dPositionX: number; dPositionY: number } {
+	if (kind === "move") {
+		return { dPositionX: 0, dPositionY: 0 };
+	}
+
+	const w0 = before.width;
+	const h0 = before.height;
+	const w1 = after.width;
+	const h1 = after.height;
+	const cos = Math.cos((before.rotation * Math.PI) / 180);
+	const sin = Math.sin((before.rotation * Math.PI) / 180);
+
+	const halfDw = (w1 - w0) / 2;
+	const halfDh = (h1 - h0) / 2;
+
+	switch (kind) {
+		case "e":
+			return { dPositionX: halfDw * cos, dPositionY: halfDw * sin };
+		case "w":
+			return { dPositionX: -halfDw * cos, dPositionY: -halfDw * sin };
+		case "s": {
+			return {
+				dPositionX: -halfDh * sin,
+				dPositionY: halfDh * cos,
+			};
+		}
+		case "n": {
+			return {
+				dPositionX: halfDh * sin,
+				dPositionY: -halfDh * cos,
+			};
+		}
+		case "se":
+			return {
+				dPositionX: halfDw * cos - halfDh * sin,
+				dPositionY: halfDw * sin - halfDh * cos,
+			};
+		case "nw":
+			return {
+				dPositionX: -halfDw * cos + halfDh * sin,
+				dPositionY: -halfDw * sin - halfDh * cos,
+			};
+		case "ne":
+			return {
+				dPositionX: halfDw * cos + halfDh * sin,
+				dPositionY: halfDw * sin - halfDh * cos,
+			};
+		case "sw":
+			return {
+				dPositionX: -halfDw * cos - halfDh * sin,
+				dPositionY: -halfDw * sin + halfDh * cos,
+			};
+		default:
+			return { dPositionX: 0, dPositionY: 0 };
+	}
+}
+
+export function getCropRectBounds({
+	fullBounds,
+	normalizedCrop,
+}: {
+	fullBounds: ElementBounds;
+	normalizedCrop: NormalizedSourceCrop;
+}): ElementBounds {
+	const c = clampNormalizedSourceCrop({ crop: normalizedCrop });
+	const fw = fullBounds.width;
+	const fh = fullBounds.height;
+	const localCx = -fw / 2 + (c.x + c.width / 2) * fw;
+	const localCy = -fh / 2 + (c.y + c.height / 2) * fh;
+	const cw = c.width * fw;
+	const ch = c.height * fh;
+	const rad = (fullBounds.rotation * Math.PI) / 180;
+	const cos = Math.cos(rad);
+	const sin = Math.sin(rad);
+	return {
+		cx: fullBounds.cx + localCx * cos - localCy * sin,
+		cy: fullBounds.cy + localCx * sin + localCy * cos,
+		width: cw,
+		height: ch,
+		rotation: fullBounds.rotation,
+	};
 }
 
 export const ROTATION_HANDLE_OFFSET = 24;

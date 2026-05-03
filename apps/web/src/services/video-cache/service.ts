@@ -15,6 +15,9 @@ interface VideoSinkData {
 	lastTime: number;
 	prefetching: boolean;
 	prefetchPromise: Promise<void> | null;
+	/** Last decoded output canvas size (same space as `drawImage` in the compositor). */
+	decodedCanvasWidth: number | null;
+	decodedCanvasHeight: number | null;
 }
 
 export class VideoCache {
@@ -22,6 +25,74 @@ export class VideoCache {
 	private initPromises = new Map<string, Promise<void>>();
 	private frameChain = new Map<string, Promise<unknown>>();
 	private seekGenerations = new Map<string, number>();
+
+	/**
+	 * Pixel size of the decoder output canvas for this asset. Uses CanvasSink
+	 * default `fit: "fill"` so frames fill the canvas (no letterboxing). Matches
+	 * `frame.canvas` used for source crop in the compositor.
+	 */
+	getDecodedCanvasSize({
+		mediaId,
+	}: {
+		mediaId: string;
+	}): { width: number; height: number } | null {
+		const sink = this.sinks.get(mediaId);
+		if (
+			!sink ||
+			sink.decodedCanvasWidth == null ||
+			sink.decodedCanvasHeight == null
+		) {
+			return null;
+		}
+		return {
+			width: sink.decodedCanvasWidth,
+			height: sink.decodedCanvasHeight,
+		};
+	}
+
+	private recordDecodedCanvasSize({
+		sinkData,
+		frame,
+	}: {
+		sinkData: VideoSinkData;
+		frame: WrappedCanvas | null;
+	}) {
+		if (!frame) {
+			return;
+		}
+		const { width, height } = frame.canvas;
+		if (width <= 0 || height <= 0) {
+			return;
+		}
+		const prevW = sinkData.decodedCanvasWidth;
+		const prevH = sinkData.decodedCanvasHeight;
+		if (prevW === width && prevH === height) {
+			return;
+		}
+		sinkData.decodedCanvasWidth = width;
+		sinkData.decodedCanvasHeight = height;
+		this.notifyDecodedCanvasSizeChange();
+	}
+
+	private decodedCanvasSizeEpoch = 0;
+	private decodedCanvasSizeListeners = new Set<() => void>();
+
+	private notifyDecodedCanvasSizeChange() {
+		this.decodedCanvasSizeEpoch += 1;
+		for (const listener of this.decodedCanvasSizeListeners) {
+			listener();
+		}
+	}
+
+	/** Lets React layers (crop overlay, bounds) re-read after the first decoded frame. */
+	subscribeDecodedCanvasSize(listener: () => void): () => void {
+		this.decodedCanvasSizeListeners.add(listener);
+		return () => this.decodedCanvasSizeListeners.delete(listener);
+	}
+
+	getDecodedCanvasSizeSnapshot(): number {
+		return this.decodedCanvasSizeEpoch;
+	}
 
 	async getFrameAt({
 		mediaId,
@@ -63,6 +134,10 @@ export class VideoCache {
 	}): Promise<WrappedCanvas | null> {
 		if (sinkData.nextFrame && sinkData.nextFrame.timestamp <= time) {
 			sinkData.currentFrame = sinkData.nextFrame;
+			this.recordDecodedCanvasSize({
+				sinkData,
+				frame: sinkData.currentFrame,
+			});
 			sinkData.nextFrame = null;
 			this.startPrefetch({ sinkData });
 		}
@@ -130,6 +205,10 @@ export class VideoCache {
 					sinkData.nextFrame.timestamp <= targetTime + 0.05 // Tolerance
 				) {
 					sinkData.currentFrame = sinkData.nextFrame;
+					this.recordDecodedCanvasSize({
+						sinkData,
+						frame: sinkData.currentFrame,
+					});
 					sinkData.nextFrame = null;
 				} else {
 					const { value: frame, done } = await sinkData.iterator.next();
@@ -137,6 +216,10 @@ export class VideoCache {
 					if (done || !frame) break;
 
 					sinkData.currentFrame = frame;
+					this.recordDecodedCanvasSize({
+						sinkData,
+						frame: sinkData.currentFrame,
+					});
 				}
 
 				const frame = sinkData.currentFrame;
@@ -183,6 +266,10 @@ export class VideoCache {
 
 			if (frame) {
 				sinkData.currentFrame = frame;
+				this.recordDecodedCanvasSize({
+					sinkData,
+					frame: sinkData.currentFrame,
+				});
 				this.startPrefetch({ sinkData });
 				return frame;
 			}
@@ -280,7 +367,6 @@ export class VideoCache {
 
 			const sink = new CanvasSink(videoTrack, {
 				poolSize: 3,
-				fit: "contain",
 			});
 
 			this.sinks.set(mediaId, {
@@ -292,6 +378,8 @@ export class VideoCache {
 				lastTime: -1,
 				prefetching: false,
 				prefetchPromise: null,
+				decodedCanvasWidth: null,
+				decodedCanvasHeight: null,
 			});
 		} catch (error) {
 			input.dispose();
@@ -314,6 +402,7 @@ export class VideoCache {
 		this.initPromises.delete(mediaId);
 		this.frameChain.delete(mediaId);
 		this.seekGenerations.delete(mediaId);
+		this.notifyDecodedCanvasSizeChange();
 	}
 
 	clearAll(): void {

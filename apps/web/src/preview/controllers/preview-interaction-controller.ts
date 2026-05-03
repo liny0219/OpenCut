@@ -135,6 +135,7 @@ export interface PlaybackApi {
 
 export interface PreviewOptions {
 	isMaskMode: () => boolean;
+	isCropMode: () => boolean;
 	onSnapLinesChange?: (lines: SnapLine[]) => void;
 }
 
@@ -302,7 +303,12 @@ export class PreviewInteractionController {
 	}
 
 	onDoubleClick({ clientX, clientY }: ReactMouseEvent): void {
-		if (this.editingTextState || this.deps.preview.isMaskMode()) return;
+		if (
+			this.editingTextState ||
+			this.deps.preview.isMaskMode() ||
+			this.deps.preview.isCropMode()
+		)
+			return;
 
 		const startPos = this.deps.viewport.screenToCanvas({
 			clientX,
@@ -335,6 +341,7 @@ export class PreviewInteractionController {
 	}: ReactPointerEvent): void {
 		if (this.editingTextState) return;
 		if (this.deps.preview.isMaskMode()) return;
+		if (this.deps.preview.isCropMode()) return;
 		if (button !== PRIMARY_POINTER_BUTTON) return;
 
 		const startPos = this.deps.viewport.screenToCanvas({

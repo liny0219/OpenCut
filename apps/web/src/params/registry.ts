@@ -326,6 +326,49 @@ const textElementParams: ElementParamDefinition[] = [
 	},
 ];
 
+const videoSourceCropParams: ElementParamDefinition[] = [
+	{
+		key: "sourceCrop.x",
+		label: "Crop left",
+		type: "number",
+		default: 0,
+		min: 0,
+		max: 1,
+		step: 0.001,
+		keyframable: false,
+	},
+	{
+		key: "sourceCrop.y",
+		label: "Crop top",
+		type: "number",
+		default: 0,
+		min: 0,
+		max: 1,
+		step: 0.001,
+		keyframable: false,
+	},
+	{
+		key: "sourceCrop.width",
+		label: "Crop width",
+		type: "number",
+		default: 1,
+		min: 0.001,
+		max: 1,
+		step: 0.001,
+		keyframable: false,
+	},
+	{
+		key: "sourceCrop.height",
+		label: "Crop height",
+		type: "number",
+		default: 1,
+		min: 0.001,
+		max: 1,
+		step: 0.001,
+		keyframable: false,
+	},
+];
+
 export const elementParamRegistry = new DefinitionRegistry<
 	ElementType,
 	readonly ElementParamDefinition[]
@@ -333,7 +376,11 @@ export const elementParamRegistry = new DefinitionRegistry<
 
 elementParamRegistry.register({
 	key: "video",
-	definition: [...visualElementParams, ...audioElementParams],
+	definition: [
+		...visualElementParams,
+		...audioElementParams,
+		...videoSourceCropParams,
+	],
 });
 elementParamRegistry.register({ key: "image", definition: visualElementParams });
 elementParamRegistry.register({

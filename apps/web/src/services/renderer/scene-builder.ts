@@ -17,6 +17,7 @@ import {
 	readBlendModeFromParams,
 	readOpacityFromParams,
 } from "@/rendering";
+import { readNormalizedSourceCropFromParams } from "@/rendering/source-crop";
 
 const PREVIEW_MAX_IMAGE_SIZE = 2048;
 
@@ -82,6 +83,9 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							sourceCrop: readNormalizedSourceCropFromParams({
+								params: element.params,
+							}),
 						}),
 					);
 				}

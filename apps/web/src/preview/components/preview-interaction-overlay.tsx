@@ -4,6 +4,7 @@ import { usePreviewInteraction } from "@/preview/hooks/use-preview-interaction";
 import type { SnapLine } from "@/preview/preview-snap";
 import { TransformHandles } from "./transform-handles";
 import { MaskHandles } from "./mask-handles";
+import { CropHandles } from "./crop-handles";
 import { SnapGuides } from "./snap-guides";
 import { TextEditOverlay } from "./text-edit-overlay";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
@@ -28,6 +29,10 @@ export function PreviewInteractionOverlay() {
 	const isMaskMode = activeElement
 		? activeTabPerType[activeElement.type] === "masks"
 		: false;
+	const isCropMode =
+		activeElement?.type === "video"
+			? activeTabPerType.video === "crop"
+			: false;
 
 	const {
 		onPointerDown,
@@ -39,6 +44,7 @@ export function PreviewInteractionOverlay() {
 	} = usePreviewInteraction({
 		onSnapLinesChange: setSnapLines,
 		isMaskMode,
+		isCropMode,
 	});
 
 	const handlePointerDown = (event: React.PointerEvent) => {
@@ -94,6 +100,8 @@ export function PreviewInteractionOverlay() {
 				/>
 			) : isMaskMode ? (
 				<MaskHandles onSnapLinesChange={setSnapLines} />
+			) : isCropMode ? (
+				<CropHandles />
 			) : (
 				<TransformHandles onSnapLinesChange={setSnapLines} />
 			)}

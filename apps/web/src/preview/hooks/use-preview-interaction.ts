@@ -16,9 +16,11 @@ export type OnSnapLinesChange = (lines: SnapLine[]) => void;
 export function usePreviewInteraction({
 	onSnapLinesChange,
 	isMaskMode = false,
+	isCropMode = false,
 }: {
 	onSnapLinesChange?: OnSnapLinesChange;
 	isMaskMode?: boolean;
+	isCropMode?: boolean;
 }) {
 	const editor = useEditor();
 	const isShiftHeldRef = useShiftKey();
@@ -57,6 +59,7 @@ export function usePreviewInteraction({
 		},
 		preview: {
 			isMaskMode: () => isMaskMode,
+			isCropMode: () => isCropMode,
 			onSnapLinesChange,
 		},
 	};

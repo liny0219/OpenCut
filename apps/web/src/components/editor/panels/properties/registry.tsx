@@ -21,11 +21,13 @@ import {
 	MusicNote03Icon,
 	MagicWand05Icon,
 	DashboardSpeed02Icon,
+	ScissorIcon,
 } from "@hugeicons/core-free-icons";
 import { ElementParamsTab } from "./components/element-params-tab";
 import { ClipEffectsTab, StandaloneEffectTab } from "@/effects/components/effects-tab";
 import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
+import { VideoCropTab } from "@/crop/video-crop-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
 
@@ -148,6 +150,21 @@ function buildSpeedTab({
 	};
 }
 
+function buildCropTab({
+	element,
+}: {
+	element: VideoElement;
+}): PropertiesTabDef {
+	return {
+		id: "crop",
+		label: "Crop",
+		icon: <HugeiconsIcon icon={ScissorIcon} size={16} />,
+		content: ({ trackId }) => (
+			<VideoCropTab element={element} trackId={trackId} />
+		),
+	};
+}
+
 function buildMasksTab({
 	element,
 }: {
@@ -249,6 +266,7 @@ function getVideoConfig({
 			buildTransformTab({ element }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
 			buildSpeedTab({ element }),
+			buildCropTab({ element }),
 			buildBlendingTab({ element }),
 			buildMasksTab({ element }),
 			buildClipEffectsTab({ element }),

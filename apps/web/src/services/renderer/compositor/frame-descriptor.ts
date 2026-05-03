@@ -239,14 +239,40 @@ async function collectVisualSourceNode({
 			? DEFAULT_GRAPHIC_SOURCE_SIZE
 			: (node.resolved as ResolvedVisualSourceNodeState).sourceHeight;
 
+	const resolvedVisual = node.resolved as ResolvedVisualSourceNodeState;
+	const sampleRect = resolvedVisual.sourceSampleRect;
+
 	const textureId = `${path}:source`;
-	textures.set(textureId, {
-		kind: "external",
-		id: textureId,
-		source,
-		width: sourceWidth,
-		height: sourceHeight,
-	});
+	if (sampleRect) {
+		textures.set(textureId, {
+			kind: "rendered",
+			id: textureId,
+			contentHash: `sample:${sampleRect.x},${sampleRect.y},${sampleRect.width}x${sampleRect.height}:${identityKey(source)}`,
+			width: sampleRect.width,
+			height: sampleRect.height,
+			draw: (ctx) => {
+				ctx.drawImage(
+					source,
+					sampleRect.x,
+					sampleRect.y,
+					sampleRect.width,
+					sampleRect.height,
+					0,
+					0,
+					sampleRect.width,
+					sampleRect.height,
+				);
+			},
+		});
+	} else {
+		textures.set(textureId, {
+			kind: "external",
+			id: textureId,
+			source,
+			width: sourceWidth,
+			height: sourceHeight,
+		});
+	}
 
 	const transform = computeVisualTransform({
 		renderer,

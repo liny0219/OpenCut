@@ -20,6 +20,11 @@ import {
 import { resolveColorAtTime, resolveOpacityAtTime } from "@/animation/values";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { videoCache } from "@/services/video-cache/service";
+import {
+	clampNormalizedSourceCrop,
+	isFullSourceCrop,
+	normalizedCropToPixelRect,
+} from "@/rendering/source-crop";
 import type { CanvasRenderer } from "./canvas-renderer";
 import type { AnyBaseNode } from "./nodes/base-node";
 import {
@@ -211,11 +216,21 @@ async function resolveVideoNode({
 		return null;
 	}
 
+	const fullW = frame.canvas.width;
+	const fullH = frame.canvas.height;
+	const crop = clampNormalizedSourceCrop({ crop: node.params.sourceCrop });
+	const pixelCrop = normalizedCropToPixelRect({
+		crop,
+		fullWidth: fullW,
+		fullHeight: fullH,
+	});
+	const useSample = !isFullSourceCrop({ crop });
+
 	const visualState = resolveVisualState({
 		params: node.params,
 		context,
-		sourceWidth: frame.canvas.width,
-		sourceHeight: frame.canvas.height,
+		sourceWidth: pixelCrop.width,
+		sourceHeight: pixelCrop.height,
 	});
 	if (!visualState) {
 		return null;
@@ -224,8 +239,9 @@ async function resolveVideoNode({
 	return {
 		...visualState,
 		source: frame.canvas,
-		sourceWidth: frame.canvas.width,
-		sourceHeight: frame.canvas.height,
+		sourceWidth: pixelCrop.width,
+		sourceHeight: pixelCrop.height,
+		...(useSample ? { sourceSampleRect: pixelCrop } : {}),
 	};
 }
 

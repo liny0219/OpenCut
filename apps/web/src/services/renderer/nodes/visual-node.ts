@@ -29,6 +29,8 @@ export interface ResolvedVisualSourceNodeState extends ResolvedVisualNodeState {
 	source: CanvasImageSource;
 	sourceWidth: number;
 	sourceHeight: number;
+	/** When set, compositor samples this sub-rectangle from `source` (pixel space). */
+	sourceSampleRect?: { x: number; y: number; width: number; height: number };
 }
 
 export abstract class VisualNode<
