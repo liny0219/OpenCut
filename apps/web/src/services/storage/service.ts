@@ -186,6 +186,15 @@ class StorageService {
 		await this.projectsAdapter.set({ key: id, value: withId });
 	}
 
+	async getSerializedProject({
+		id,
+	}: {
+		id: string;
+	}): Promise<SerializedProject | null> {
+		await this.ensureMigrations();
+		return this.projectsAdapter.get(id);
+	}
+
 	async loadProject({
 		id,
 	}: {

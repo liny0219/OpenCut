@@ -11,6 +11,7 @@ export class SaveManager {
 	private hasPendingSave = false;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 	private unsubscribeHandlers: Array<() => void> = [];
+	private afterSaveListeners = new Set<() => void>();
 
 	constructor({
 		editor,
@@ -71,6 +72,11 @@ export class SaveManager {
 		return this.hasPendingSave || this.isSaving;
 	}
 
+	subscribeAfterSave(listener: () => void): () => void {
+		this.afterSaveListeners.add(listener);
+		return () => this.afterSaveListeners.delete(listener);
+	}
+
 	private queueSave(): void {
 		if (this.isSaving) return;
 		if (this.saveTimer) {
@@ -96,6 +102,7 @@ export class SaveManager {
 
 		try {
 			await this.editor.project.saveCurrentProject();
+			this.afterSaveListeners.forEach((listener) => listener());
 		} finally {
 			this.isSaving = false;
 			if (this.hasPendingSave) {

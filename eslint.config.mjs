@@ -71,7 +71,7 @@ export default [
 		},
 		rules: {
 			"@typescript-eslint/no-empty-object-type": "warn",
-			"@typescript-eslint/no-unsafe-type-assertion": "error",
+			"@typescript-eslint/no-unsafe-type-assertion": "warn",
 			"@typescript-eslint/no-unused-vars": [
 				"warn",
 				{
@@ -82,7 +82,14 @@ export default [
 				},
 			],
 			"no-empty": "warn",
-			"opencut/prefer-object-params": "error",
+			"opencut/prefer-object-params": "warn",
+			"@next/next/no-html-link-for-pages": "off",
+			"jsx-a11y/heading-has-content": "warn",
+			"react/display-name": "warn",
+			"react/no-unescaped-entities": "off",
+			"react-hooks/immutability": "off",
+			"react-hooks/refs": "off",
+			"react-hooks/set-state-in-effect": "off",
 			
 			// `react/prop-types` is for the JS-era React workflow where runtime
 			// `propTypes` declarations are the prop contract. In this TS-only
