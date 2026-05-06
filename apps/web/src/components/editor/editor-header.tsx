@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "../ui/button";
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -10,6 +10,7 @@ import {
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { RenameProjectDialog } from "@/project/components/rename-project-dialog";
 import { DeleteProjectDialog } from "@/project/components/delete-project-dialog";
 import { useRouter } from "next/navigation";
@@ -26,6 +27,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { ShortcutsDialog } from "@/actions/components/shortcuts-dialog";
 import Image from "next/image";
 import { cn } from "@/utils/ui";
+import { Minimize2 } from "lucide-react";
 
 export function EditorHeader() {
 	return (
@@ -35,11 +37,71 @@ export function EditorHeader() {
 				<EditableProjectName />
 			</div>
 			<nav className="flex items-center gap-2">
+				<NtFullscreenExitButton />
 				<FeedbackPopover />
 				<ExportButton />
 				<ThemeToggle />
 			</nav>
 		</header>
+	);
+}
+
+function NtFullscreenExitButton() {
+	const searchParams = useSearchParams();
+	const embed = searchParams.get("embed") === "1";
+	const parentOrigin = searchParams.get("parentOrigin") || "*";
+	const [isFullscreen, setIsFullscreen] = useState(false);
+	const activeProject = useEditor((e) => e.project.getActiveOrNull());
+
+	useEffect(() => {
+		if (!embed) return;
+
+		const onMessage = (event: MessageEvent) => {
+			if (parentOrigin !== "*" && event.origin !== parentOrigin) return;
+			if (
+				event.data?.source !== "nt" ||
+				event.data?.type !== "NT_OPENCUT_FULLSCREEN_CHANGED"
+			) {
+				return;
+			}
+			if (
+				typeof event.data?.sessionId === "string" &&
+				activeProject &&
+				event.data.sessionId !== activeProject.metadata.id
+			) {
+				return;
+			}
+			setIsFullscreen(Boolean(event.data?.fullscreen));
+		};
+
+		window.addEventListener("message", onMessage);
+		return () => window.removeEventListener("message", onMessage);
+	}, [activeProject, embed, parentOrigin]);
+
+	const handleExitFullscreen = useCallback(() => {
+		if (!activeProject) return;
+		window.parent.postMessage(
+			{
+				type: "OPENCUT_EXIT_FULLSCREEN",
+				source: "opencut",
+				sessionId: activeProject.metadata.id,
+			},
+			parentOrigin,
+		);
+	}, [activeProject, parentOrigin]);
+
+	if (!embed || !isFullscreen) return null;
+
+	return (
+		<Button
+			variant="outline"
+			className="h-8 gap-2"
+			onClick={handleExitFullscreen}
+			title="Exit fullscreen editing"
+		>
+			<Minimize2 className="size-3.5" />
+			Exit fullscreen
+		</Button>
 	);
 }
 
