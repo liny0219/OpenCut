@@ -144,10 +144,19 @@ export async function processMediaAssets({
 					thumbnailUrl = videoData.thumbnailUrl ?? undefined;
 
 					if (!videoData.canDecode) {
+						const description = getUnsupportedVideoDescription({
+							codec: videoData.codec,
+						});
+						console.error("[OpenCut] Imported video cannot be decoded", {
+							fileName: file.name,
+							fileType: file.type,
+							fileSize: file.size,
+							codec: videoData.codec,
+							description,
+						});
 						toast.error(`Can't preview ${file.name}`, {
-							description: getUnsupportedVideoDescription({
-								codec: videoData.codec,
-							}),
+							description,
+							duration: 15000,
 						});
 					}
 				} catch (error) {
@@ -156,8 +165,15 @@ export async function processMediaAssets({
 							? error.message
 							: "Could not process video";
 
+					console.error("[OpenCut] Couldn't process imported video", {
+						fileName: file.name,
+						fileType: file.type,
+						fileSize: file.size,
+						error,
+					});
 					toast.error(`Couldn't process ${file.name}`, {
 						description: message,
+						duration: 15000,
 					});
 				}
 			} else if (fileType === "audio") {
@@ -186,7 +202,10 @@ export async function processMediaAssets({
 			}
 		} catch (error) {
 			console.error("Error processing file:", file.name, error);
-			toast.error(`Failed to process ${file.name}`);
+			toast.error(`Failed to process ${file.name}`, {
+				description: error instanceof Error ? error.message : undefined,
+				duration: 15000,
+			});
 			URL.revokeObjectURL(url);
 		}
 	}

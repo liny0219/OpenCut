@@ -352,7 +352,16 @@ export class VideoCache {
 
 			const canDecode = await videoTrack.canDecode();
 			if (!canDecode) {
-				throw new Error("Video codec not supported for decoding");
+				console.warn(
+					"Video codec support check failed; attempting browser decode anyway",
+					{
+						mediaId,
+						fileName: file.name,
+						fileType: file.type,
+						fileSize: file.size,
+						codec: videoTrack.codec,
+					},
+				);
 			}
 
 			const sink = new CanvasSink(videoTrack, {

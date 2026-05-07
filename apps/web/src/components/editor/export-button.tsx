@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { TransitionTopIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -34,16 +34,6 @@ import {
 } from "@/components/section";
 import { useEditor } from "@/editor/use-editor";
 import { DEFAULT_EXPORT_OPTIONS } from "@/export/defaults";
-import { generateUUID } from "@/utils/id";
-
-/** NT iframe：与 nt-embed-bridge 的 parentOrigin 一致 */
-function getNtEmbedParentTarget(): string | null {
-	if (typeof window === "undefined") return null;
-	const sp = new URLSearchParams(window.location.search);
-	if (sp.get("embed") !== "1") return null;
-	const raw = sp.get("parentOrigin");
-	return raw && raw.length > 0 ? raw : "*";
-}
 
 function isExportFormat(value: string): value is ExportFormat {
 	return EXPORT_FORMAT_VALUES.some((formatValue) => formatValue === value);
@@ -102,6 +92,7 @@ function ExportPopover() {
 	const activeProject = useEditor((e) => e.project.getActive());
 	const exportState = useEditor((e) => e.project.getExportState());
 	const { isExporting, progress, result: exportResult } = exportState;
+	const [lastError, setLastError] = useState<string | null>(null);
 	const [format, setFormat] = useState<ExportFormat>(
 		DEFAULT_EXPORT_OPTIONS.format,
 	);
@@ -111,191 +102,97 @@ function ExportPopover() {
 	const [shouldIncludeAudio, setShouldIncludeAudio] = useState<boolean>(
 		DEFAULT_EXPORT_OPTIONS.includeAudio ?? true,
 	);
-	const [queue, setQueue] = useState<ExportQueueItem[]>([]);
-	const isProcessingRef = useRef(false);
-	const currentJobIdRef = useRef<string | null>(null);
-	const currentUploadAbortRef = useRef<AbortController | null>(null);
-	const [currentJobId, setCurrentJobId] = useState<string | null>(null);
 
-	const enqueueExport = () => {
-		if (!activeProject) return;
-		const item: ExportQueueItem = {
-			id: generateUUID(),
-			projectName: activeProject.metadata.name,
-			format,
-			quality,
-			includeAudio: shouldIncludeAudio,
-			status: "queued",
-			progress: 0,
-			createdAt: Date.now(),
-		};
-		setQueue((items) => [...items, item]);
-	};
-
-	const runExportJob = useCallback(async (job: ExportQueueItem) => {
-		if (!activeProject) return;
-		currentJobIdRef.current = job.id;
-		setCurrentJobId(job.id);
-		setQueue((items) =>
-			items.map((item) =>
-				item.id === job.id ? { ...item, status: "running", progress: 0 } : item,
-			),
-		);
+	const startExport = useCallback(async () => {
+		if (!activeProject || isExporting) return;
+		setLastError(null);
 		const result = await editor.project.export({
 			options: {
-				format: job.format,
-				quality: job.quality,
+				format,
+				quality,
 				fps: activeProject.settings.fps,
-				includeAudio: job.includeAudio,
+				includeAudio: shouldIncludeAudio,
 			},
 		});
 
 		if (result.cancelled) {
 			editor.project.clearExportState();
-			setQueue((items) =>
-				items.map((item) =>
-					item.id === job.id ? { ...item, status: "cancelled" } : item,
-				),
-			);
 			return;
 		}
 
 		if (result.success && result.buffer) {
-			const filename = `${activeProject.metadata.name}${getExportFileExtension({ format: job.format })}`;
-			const mimeType = getExportMimeType({ format: job.format });
-			const parentTarget = getNtEmbedParentTarget();
-
-			if (parentTarget != null && window.parent !== window) {
-				const transferable = result.buffer.slice(0);
-				setQueue((items) =>
-					items.map((item) =>
-						item.id === job.id
-							? { ...item, status: "uploading", progress: 1, filename }
-							: item,
-					),
-				);
-				const uploadAbortController = new AbortController();
-				currentUploadAbortRef.current = uploadAbortController;
-				try {
-					await postExportToNtAndWait({
-						exportId: job.id,
-						parentTarget,
-						sessionId: activeProject.metadata.id,
-						fileName: filename,
-						mimeType,
-						buffer: transferable,
-						signal: uploadAbortController.signal,
-					});
-				} catch (err) {
-					if (isAbortError(err)) {
-						editor.project.clearExportState();
-						setQueue((items) =>
-							items.map((item) =>
-								item.id === job.id ? { ...item, status: "cancelled" } : item,
-							),
-						);
-						return;
-					}
-					throw err;
-				} finally {
-					currentUploadAbortRef.current = null;
-				}
-			} else {
-				downloadBuffer({
-					buffer: result.buffer,
-					filename,
-					mimeType,
-				});
-			}
-
-			editor.project.clearExportState();
-			setQueue((items) =>
-				items.map((item) =>
-					item.id === job.id
-						? { ...item, status: "completed", progress: 1, filename }
-						: item,
-				),
-			);
-			return;
-		}
-
-		setQueue((items) =>
-			items.map((item) =>
-				item.id === job.id
-					? {
-							...item,
-							status: "failed",
-							error: result.success ? "Export did not return a file" : result.error,
-						}
-					: item,
-			),
-		);
-	}, [activeProject, editor]);
-
-	useEffect(() => {
-		if (isProcessingRef.current) return;
-		const nextJob = queue.find((item) => item.status === "queued");
-		if (!nextJob) return;
-
-		isProcessingRef.current = true;
-		void runExportJob(nextJob)
-			.catch((err) => {
-				setQueue((items) =>
-					items.map((item) =>
-						item.id === nextJob.id
-							? {
-									...item,
-									status: "failed",
-									error: err instanceof Error ? err.message : "Export failed",
-								}
-							: item,
-					),
-				);
-			})
-			.finally(() => {
-				currentJobIdRef.current = null;
-				setCurrentJobId(null);
-				isProcessingRef.current = false;
-				setQueue((items) => [...items]);
+			downloadBuffer({
+				buffer: result.buffer,
+				filename: `${activeProject.metadata.name}${getExportFileExtension({
+					format,
+				})}`,
+				mimeType: getExportMimeType({ format }),
 			});
-	}, [queue, runExportJob]);
+			editor.project.clearExportState();
+			return;
+		}
 
-	const handleCancel = (jobId: string) => {
-		if (currentJobIdRef.current !== jobId) {
-			setQueue((items) =>
-				items.map((item) =>
-					item.id === jobId && item.status === "queued"
-						? { ...item, status: "cancelled" }
-						: item,
-				),
-			);
-			return;
-		}
-		const currentItem = queue.find((item) => item.id === jobId);
-		if (currentItem?.status === "uploading") {
-			currentUploadAbortRef.current?.abort();
-			return;
-		}
+		const message = result.success
+			? "Export did not return a file"
+			: result.error || "Export failed";
+		setLastError(message);
+		console.error("[OpenCut] Export failed", {
+			projectId: activeProject.metadata.id,
+			projectName: activeProject.metadata.name,
+			format,
+			quality,
+			includeAudio: shouldIncludeAudio,
+			message,
+		});
+	}, [
+		activeProject,
+		editor,
+		format,
+		isExporting,
+		quality,
+		shouldIncludeAudio,
+	]);
+
+	const handleCancel = () => {
 		editor.project.cancelExport();
 	};
 
-	const clearFinished = () => {
-		setQueue((items) =>
-			items.filter(
-				(item) =>
-					item.status === "queued" ||
-					item.status === "running" ||
-					item.status === "uploading",
-			),
-		);
-	};
-
 	return (
-		<PopoverContent className="bg-background mr-4 flex w-80 flex-col p-0">
-			{exportResult && !exportResult.success ? (
+		<>
+			{isExporting && (
+				<div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm">
+					<div className="bg-background w-[min(24rem,calc(100vw-2rem))] rounded-lg border p-5 shadow-xl">
+						<div className="mb-4 flex items-start justify-between gap-4">
+							<div>
+								<p className="text-sm font-medium">Exporting video</p>
+								<p className="text-muted-foreground mt-1 text-xs">
+									Please wait for this export to finish before editing.
+								</p>
+							</div>
+							<p className="text-muted-foreground text-sm">
+								{Math.round(progress * 100)}%
+							</p>
+						</div>
+						<Progress value={progress * 100} className="mb-4 w-full" />
+						<Button
+							variant="outline"
+							className="w-full rounded-md"
+							onClick={handleCancel}
+						>
+							Cancel export
+						</Button>
+					</div>
+				</div>
+			)}
+			<PopoverContent className="bg-background mr-4 flex w-80 flex-col p-0">
+			{(exportResult && !exportResult.success) || lastError ? (
 				<ExportError
-					error={exportResult.error || "Unknown error occurred"}
-					onRetry={enqueueExport}
+					error={
+						lastError ||
+						exportResult?.error ||
+						"Unknown error occurred"
+					}
+					onRetry={startExport}
 				/>
 			) : (
 				<>
@@ -306,14 +203,12 @@ function ExportPopover() {
 					</div>
 
 					<div className="flex flex-col gap-4">
-						{!isExporting && (
-							<>
-								<div className="flex flex-col">
-									<Section
-										collapsible
-										defaultOpen={false}
-										showTopBorder={false}
-									>
+						<div className="flex flex-col">
+							<Section
+								collapsible
+								defaultOpen={false}
+								showTopBorder={false}
+							>
 										<SectionHeader>
 											<SectionTitle>Format</SectionTitle>
 										</SectionHeader>
@@ -340,9 +235,9 @@ function ExportPopover() {
 												</div>
 											</RadioGroup>
 										</SectionContent>
-									</Section>
+							</Section>
 
-									<Section collapsible defaultOpen={false}>
+							<Section collapsible defaultOpen={false}>
 										<SectionHeader>
 											<SectionTitle>Quality</SectionTitle>
 										</SectionHeader>
@@ -375,9 +270,9 @@ function ExportPopover() {
 												</div>
 											</RadioGroup>
 										</SectionContent>
-									</Section>
+							</Section>
 
-									<Section collapsible defaultOpen={false}>
+							<Section collapsible defaultOpen={false}>
 										<SectionHeader>
 											<SectionTitle>Audio</SectionTitle>
 										</SectionHeader>
@@ -395,239 +290,25 @@ function ExportPopover() {
 												</Label>
 											</div>
 										</SectionContent>
-									</Section>
-								</div>
+							</Section>
+						</div>
 
-								<div className="p-3 pt-0">
-									<Button onClick={enqueueExport} className="w-full gap-2">
-										<Download className="size-4" />
-										Add to export queue
-									</Button>
-								</div>
-							</>
-						)}
-
-						{isExporting && (
-							<div className="space-y-4 p-3">
-								<div className="flex flex-col gap-2">
-									<div className="flex items-center justify-between text-center">
-										<p className="text-muted-foreground text-sm">
-											{Math.round(progress * 100)}%
-										</p>
-										<p className="text-muted-foreground text-sm">100%</p>
-									</div>
-									<Progress value={progress * 100} className="w-full" />
-								</div>
-
-								<Button
-									variant="outline"
-									className="w-full rounded-md"
-									onClick={() => {
-										const currentId = currentJobIdRef.current;
-										if (currentId) handleCancel(currentId);
-									}}
-								>
-									Cancel running export
-								</Button>
-							</div>
-						)}
-
-						<ExportQueue
-							items={queue}
-							progress={progress}
-							currentJobId={currentJobId}
-							onCancel={handleCancel}
-							onClearFinished={clearFinished}
-						/>
+						<div className="p-3 pt-0">
+							<Button
+								onClick={startExport}
+								className="w-full gap-2"
+								disabled={isExporting}
+							>
+								<Download className="size-4" />
+								Export and download
+							</Button>
+						</div>
 					</div>
 				</>
 			)}
-		</PopoverContent>
+			</PopoverContent>
+		</>
 	);
-}
-
-type ExportQueueItem = {
-	id: string;
-	projectName: string;
-	format: ExportFormat;
-	quality: ExportQuality;
-	includeAudio: boolean;
-	status: "queued" | "running" | "uploading" | "completed" | "cancelled" | "failed";
-	progress: number;
-	createdAt: number;
-	filename?: string;
-	error?: string;
-};
-
-function isAbortError(value: unknown) {
-	return value instanceof DOMException && value.name === "AbortError";
-}
-
-function postExportToNtAndWait({
-	exportId,
-	parentTarget,
-	sessionId,
-	fileName,
-	mimeType,
-	buffer,
-	signal,
-}: {
-	exportId: string;
-	parentTarget: string;
-	sessionId: string;
-	fileName: string;
-	mimeType: string;
-	buffer: ArrayBuffer;
-	signal?: AbortSignal;
-}): Promise<void> {
-	return new Promise((resolve, reject) => {
-		if (signal?.aborted) {
-			reject(new DOMException("Export upload cancelled", "AbortError"));
-			return;
-		}
-
-		const timeout = window.setTimeout(() => {
-			window.removeEventListener("message", onMessage);
-			signal?.removeEventListener("abort", onAbort);
-			reject(new Error("Timed out waiting for NT export confirmation"));
-		}, 10 * 60 * 1000);
-
-		const cleanup = () => {
-			window.clearTimeout(timeout);
-			window.removeEventListener("message", onMessage);
-			signal?.removeEventListener("abort", onAbort);
-		};
-
-		const onAbort = () => {
-			cleanup();
-			window.parent.postMessage(
-				{
-					type: "OPENCUT_EXPORT_CANCEL",
-					source: "opencut",
-					exportId,
-					sessionId,
-				},
-				parentTarget,
-			);
-			reject(new DOMException("Export upload cancelled", "AbortError"));
-		};
-
-		const onMessage = (event: MessageEvent) => {
-			if (parentTarget !== "*" && event.origin !== parentTarget) return;
-			if (event.data?.source !== "nt" || event.data?.exportId !== exportId) return;
-			if (event.data?.type === "NT_OPENCUT_EXPORT_COMPLETE") {
-				cleanup();
-				resolve();
-			}
-			if (event.data?.type === "NT_OPENCUT_EXPORT_CANCELLED") {
-				cleanup();
-				reject(new DOMException("Export upload cancelled", "AbortError"));
-			}
-			if (event.data?.type === "NT_OPENCUT_EXPORT_FAILED") {
-				cleanup();
-				reject(new Error(event.data?.message || "NT export sync failed"));
-			}
-		};
-
-		window.addEventListener("message", onMessage);
-		signal?.addEventListener("abort", onAbort, { once: true });
-		window.parent.postMessage(
-			{
-				type: "OPENCUT_EXPORT_BLOB",
-				source: "opencut",
-				exportId,
-				sessionId,
-				fileName,
-				mimeType,
-				byteSize: buffer.byteLength,
-				buffer,
-			},
-			parentTarget,
-			[buffer],
-		);
-	});
-}
-
-function ExportQueue({
-	items,
-	progress,
-	currentJobId,
-	onCancel,
-	onClearFinished,
-}: {
-	items: ExportQueueItem[];
-	progress: number;
-	currentJobId: string | null;
-	onCancel: (jobId: string) => void;
-	onClearFinished: () => void;
-}) {
-	if (items.length === 0) return null;
-
-	return (
-		<div className="border-t p-3 space-y-2">
-			<div className="flex items-center justify-between">
-				<p className="text-sm font-medium">Export queue</p>
-				<Button variant="text" size="sm" onClick={onClearFinished}>
-					Clear finished
-				</Button>
-			</div>
-			<div className="space-y-2">
-				{items.map((item) => {
-					const isCurrent = item.id === currentJobId;
-					const shownProgress = isCurrent ? progress : item.progress;
-					return (
-						<div key={item.id} className="rounded-md border p-2 space-y-2">
-							<div className="flex items-start justify-between gap-2">
-								<div className="min-w-0">
-									<p className="truncate text-xs font-medium">
-										{item.filename || `${item.projectName}.${item.format}`}
-									</p>
-									<p className="text-muted-foreground text-[11px]">
-										{exportStatusLabel(item.status)}
-									</p>
-								</div>
-								{(item.status === "queued" ||
-									item.status === "running" ||
-									item.status === "uploading") && (
-									<Button
-										variant="outline"
-										size="sm"
-										className="h-7 px-2 text-xs"
-										onClick={() => onCancel(item.id)}
-									>
-										{item.status === "uploading" ? "Interrupt" : "Cancel"}
-									</Button>
-								)}
-							</div>
-							{(item.status === "running" || item.status === "uploading") && (
-								<Progress value={shownProgress * 100} className="h-1.5 w-full" />
-							)}
-							{item.error && (
-								<p className="text-destructive text-[11px]">{item.error}</p>
-							)}
-						</div>
-					);
-				})}
-			</div>
-		</div>
-	);
-}
-
-function exportStatusLabel(status: ExportQueueItem["status"]) {
-	switch (status) {
-		case "queued":
-			return "Waiting";
-		case "running":
-			return "Compositing";
-		case "uploading":
-			return "Syncing to NT outputs";
-		case "completed":
-			return "Synced to NT outputs";
-		case "cancelled":
-			return "Cancelled";
-		case "failed":
-			return "Failed";
-	}
 }
 
 function ExportError({
