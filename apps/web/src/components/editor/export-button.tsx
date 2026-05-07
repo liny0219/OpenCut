@@ -111,20 +111,163 @@ function canvasToPngFile(canvas: HTMLCanvasElement, name: string) {
 	});
 }
 
-function escapeSvgAttribute(value: string) {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/"/g, "&quot;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
-}
-
 function firstCssColor(value: string) {
 	return (
 		value.match(/#[0-9a-f]{6,8}\b/i)?.[0] ||
 		value.match(/rgba?\([^)]+\)/i)?.[0] ||
 		"#000000"
 	);
+}
+
+function splitTopLevelCommas(value: string) {
+	const parts: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let index = 0; index < value.length; index += 1) {
+		const char = value[index];
+		if (char === "(") depth += 1;
+		else if (char === ")") depth = Math.max(0, depth - 1);
+		else if (char === "," && depth === 0) {
+			parts.push(value.slice(start, index).trim());
+			start = index + 1;
+		}
+	}
+	parts.push(value.slice(start).trim());
+	return parts.filter(Boolean);
+}
+
+function colorStopColor(stop: string) {
+	const trimmed = stop.trim();
+	const color =
+		trimmed.match(/#[0-9a-f]{3,8}\b/i)?.[0] ||
+		trimmed.match(/(?:rgba?|hsla?)\([^)]+\)/i)?.[0] ||
+		trimmed.match(/\b(?:transparent|white|black|red|green|blue|yellow|cyan|magenta|pink|purple|orange|gray|grey)\b/i)?.[0];
+	return color || firstCssColor(trimmed);
+}
+
+function colorStopOffset(stop: string) {
+	const match = stop.match(/(-?\d+(?:\.\d+)?)%/);
+	if (!match) return null;
+	return Math.max(0, Math.min(1, Number(match[1]) / 100));
+}
+
+function addColorStops(gradient: CanvasGradient, stops: string[]) {
+	stops.forEach((stop, index) => {
+		const fallback = stops.length <= 1 ? 0 : index / (stops.length - 1);
+		gradient.addColorStop(colorStopOffset(stop) ?? fallback, colorStopColor(stop));
+	});
+}
+
+function linearGradientPoints({
+	width,
+	height,
+	direction,
+}: {
+	width: number;
+	height: number;
+	direction: string;
+}) {
+	const normalized = direction.trim().toLowerCase();
+	if (normalized === "to right") return [0, 0, width, 0] as const;
+	if (normalized === "to left") return [width, 0, 0, 0] as const;
+	if (normalized === "to bottom") return [0, 0, 0, height] as const;
+	if (normalized === "to top") return [0, height, 0, 0] as const;
+	if (normalized === "to bottom right") return [0, 0, width, height] as const;
+	if (normalized === "to bottom left") return [width, 0, 0, height] as const;
+	if (normalized === "to top right") return [0, height, width, 0] as const;
+	if (normalized === "to top left") return [width, height, 0, 0] as const;
+
+	const degrees = Number(normalized.match(/(-?\d+(?:\.\d+)?)deg/)?.[1] ?? 180);
+	const radians = ((degrees - 90) * Math.PI) / 180;
+	const length = Math.hypot(width, height);
+	const cx = width / 2;
+	const cy = height / 2;
+	const dx = Math.cos(radians) * length / 2;
+	const dy = Math.sin(radians) * length / 2;
+	return [cx - dx, cy - dy, cx + dx, cy + dy] as const;
+}
+
+function radialGradientCenter({
+	width,
+	height,
+	descriptor,
+}: {
+	width: number;
+	height: number;
+	descriptor: string;
+}) {
+	const at = descriptor.match(/\bat\s+([^,]+)/i)?.[1]?.trim().toLowerCase();
+	if (!at) return { x: width / 2, y: height / 2 };
+	const percentages = [...at.matchAll(/(-?\d+(?:\.\d+)?)%/g)].map((match) => Number(match[1]) / 100);
+	if (percentages.length >= 2) return { x: percentages[0] * width, y: percentages[1] * height };
+	let x = width / 2;
+	let y = height / 2;
+	if (at.includes("left")) x = 0;
+	if (at.includes("right")) x = width;
+	if (at.includes("top")) y = 0;
+	if (at.includes("bottom")) y = height;
+	return { x, y };
+}
+
+function drawBackgroundLayer({
+	ctx,
+	layer,
+	width,
+	height,
+}: {
+	ctx: CanvasRenderingContext2D;
+	layer: string;
+	width: number;
+	height: number;
+}) {
+	const linear = layer.match(/^linear-gradient\((.*)\)$/i);
+	if (linear) {
+		const parts = splitTopLevelCommas(linear[1]);
+		const first = parts[0] || "";
+		const hasDirection = /^to\s|deg$/i.test(first.trim()) || /deg$/i.test(first.trim());
+		const stops = hasDirection ? parts.slice(1) : parts;
+		const points = linearGradientPoints({
+			width,
+			height,
+			direction: hasDirection ? first : "to bottom",
+		});
+		const gradient = ctx.createLinearGradient(...points);
+		addColorStops(gradient, stops);
+		ctx.fillStyle = gradient;
+		ctx.fillRect(0, 0, width, height);
+		return;
+	}
+
+	const radial = layer.match(/^radial-gradient\((.*)\)$/i);
+	if (radial) {
+		const parts = splitTopLevelCommas(radial[1]);
+		const first = parts[0] || "";
+		const hasDescriptor = /\bat\b|circle|ellipse/i.test(first);
+		const stops = hasDescriptor ? parts.slice(1) : parts;
+		const center = radialGradientCenter({
+			width,
+			height,
+			descriptor: hasDescriptor ? first : "",
+		});
+		const radius = Math.max(
+			Math.hypot(center.x, center.y),
+			Math.hypot(width - center.x, center.y),
+			Math.hypot(center.x, height - center.y),
+			Math.hypot(width - center.x, height - center.y),
+		);
+		const gradient = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, radius);
+		addColorStops(gradient, stops);
+		ctx.fillStyle = gradient;
+		ctx.fillRect(0, 0, width, height);
+		return;
+	}
+
+	try {
+		ctx.fillStyle = layer || firstCssColor(layer);
+	} catch {
+		ctx.fillStyle = firstCssColor(layer);
+	}
+	ctx.fillRect(0, 0, width, height);
 }
 
 async function drawCssBackgroundToCanvas({
@@ -137,22 +280,15 @@ async function drawCssBackgroundToCanvas({
 	const ctx = canvas.getContext("2d");
 	if (!ctx) throw new Error("Canvas is not available");
 
-	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;background:${escapeSvgAttribute(background)}"></div></foreignObject></svg>`;
-	const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-	try {
-		const image = new Image();
-		image.decoding = "async";
-		await new Promise<void>((resolve, reject) => {
-			image.onload = () => resolve();
-			image.onerror = () => reject(new Error("Failed to render background"));
-			image.src = url;
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	const layers = splitTopLevelCommas(background);
+	for (const layer of layers.reverse()) {
+		drawBackgroundLayer({
+			ctx,
+			layer,
+			width: canvas.width,
+			height: canvas.height,
 		});
-		ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-	} catch {
-		ctx.fillStyle = firstCssColor(background);
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
-	} finally {
-		URL.revokeObjectURL(url);
 	}
 }
 
@@ -455,7 +591,7 @@ function ExportPopover() {
 	const { isExporting, progress, result: exportResult } = exportState;
 	const parentOrigin = searchParams.get("parentOrigin");
 	const isEmbeddedInNt = searchParams.get("embed") === "1" && !!parentOrigin;
-	const defaultExportMethod = isEmbeddedInNt ? "server-ffmpeg" : "client";
+	const defaultExportMethod = "client";
 	const [lastError, setLastError] = useState<string | null>(null);
 	const [exportMethod, setExportMethod] =
 		useState<ExportMethod>(defaultExportMethod);
@@ -582,7 +718,12 @@ function ExportPopover() {
 				let uploadDoneAt = totalStartedAt;
 				const jobResponse = await new Promise<any>((resolve, reject) => {
 					const xhr = new XMLHttpRequest();
-					serverAbortController.current = { abort: () => xhr.abort() };
+					serverAbortController.current = {
+						abort: () => {
+							abortController.abort();
+							xhr.abort();
+						},
+					};
 					xhr.open("POST", `${serverExportEndpoint}/jobs`);
 					xhr.responseType = "json";
 					xhr.upload.onprogress = (event) => {
@@ -606,6 +747,7 @@ function ExportPopover() {
 				const job = jobResponse?.data?.job;
 				if (!job?.id) throw new Error("Server FFmpeg did not return a job id");
 				serverJobRef.current = { endpoint: serverExportEndpoint, jobId: job.id };
+				serverAbortController.current = { abort: () => abortController.abort() };
 
 				let completedJob = job;
 				while (true) {
@@ -613,6 +755,12 @@ function ExportPopover() {
 					const statusResponse = await fetch(`${serverExportEndpoint}/jobs/${job.id}`, {
 						signal: abortController.signal,
 					});
+					if (!statusResponse.ok) {
+						if (abortController.signal.aborted || statusResponse.status === 404) {
+							throw new DOMException("Server FFmpeg export cancelled", "AbortError");
+						}
+						throw new Error(`Server FFmpeg status failed (${statusResponse.status})`);
+					}
 					const statusJson = await statusResponse.json();
 					completedJob = statusJson?.data?.job;
 					const renderProgress = Number(completedJob?.progress || 0);
@@ -627,7 +775,17 @@ function ExportPopover() {
 					if (completedJob?.status === "failed" || completedJob?.status === "cancelled") {
 						throw new Error(completedJob.error || "Server FFmpeg export failed");
 					}
-					await new Promise((resolve) => setTimeout(resolve, 1000));
+					await new Promise<void>((resolve, reject) => {
+						const timer = setTimeout(resolve, 1000);
+						abortController.signal.addEventListener(
+							"abort",
+							() => {
+								clearTimeout(timer);
+								reject(new DOMException("Server FFmpeg export cancelled", "AbortError"));
+							},
+							{ once: true },
+						);
+					});
 				}
 
 				const downloadResponse = await fetch(`${serverExportEndpoint}/jobs/${job.id}/download`, {
