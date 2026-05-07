@@ -22,7 +22,7 @@ import {
 	getExportFileExtension,
 	downloadBuffer,
 } from "@/export";
-import { Check, Copy, Download, RotateCcw } from "lucide-react";
+import { Download } from "lucide-react";
 import {
 	EXPORT_FORMAT_VALUES,
 	EXPORT_QUALITY_VALUES,
@@ -588,11 +588,10 @@ function ExportPopover() {
 	const searchParams = useSearchParams();
 	const activeProject = useEditor((e) => e.project.getActive());
 	const exportState = useEditor((e) => e.project.getExportState());
-	const { isExporting, progress, result: exportResult } = exportState;
+	const { isExporting, progress } = exportState;
 	const parentOrigin = searchParams.get("parentOrigin");
 	const isEmbeddedInNt = searchParams.get("embed") === "1" && !!parentOrigin;
 	const defaultExportMethod = "client";
-	const [lastError, setLastError] = useState<string | null>(null);
 	const [exportMethod, setExportMethod] =
 		useState<ExportMethod>(defaultExportMethod);
 	const [format, setFormat] = useState<ExportFormat>(
@@ -637,7 +636,6 @@ function ExportPopover() {
 		if (!activeProject || !serverExportEndpoint || serverExportState.isExporting) {
 			return;
 		}
-			setLastError(null);
 			setClientExportElapsedMs(0);
 				setServerExportState({
 				isExporting: true,
@@ -772,7 +770,10 @@ function ExportPopover() {
 						timing: `Upload ${formatElapsed(uploadDoneAt - totalStartedAt)} · render ${formatElapsed(performance.now() - uploadDoneAt)}`,
 					});
 					if (completedJob?.status === "completed") break;
-					if (completedJob?.status === "failed" || completedJob?.status === "cancelled") {
+					if (completedJob?.status === "cancelled") {
+						throw new DOMException("Server FFmpeg export cancelled", "AbortError");
+					}
+					if (completedJob?.status === "failed") {
 						throw new Error(completedJob.error || "Server FFmpeg export failed");
 					}
 					await new Promise<void>((resolve, reject) => {
@@ -803,11 +804,8 @@ function ExportPopover() {
 				console.info(`[OpenCut] ${timing}`);
 		} catch (error) {
 			if (error instanceof DOMException && error.name === "AbortError") {
-				setLastError("Server FFmpeg export cancelled");
+				console.info("[OpenCut] Server FFmpeg export cancelled");
 			} else {
-				const message =
-					error instanceof Error ? error.message : "Server FFmpeg export failed";
-				setLastError(message);
 				console.error("[OpenCut] Server FFmpeg export failed", error);
 			}
 		} finally {
@@ -829,7 +827,6 @@ function ExportPopover() {
 			await startServerExport();
 			return;
 		}
-		setLastError(null);
 		setLastTiming(null);
 		const startedAt = performance.now();
 		setClientExportElapsedMs(0);
@@ -837,50 +834,61 @@ function ExportPopover() {
 		clientExportTimerRef.current = setInterval(() => {
 			setClientExportElapsedMs(performance.now() - startedAt);
 		}, 500);
-		const result = await editor.project.export({
-			options: {
+		try {
+			const result = await editor.project.export({
+				options: {
+					format,
+					quality,
+					fps: activeProject.settings.fps,
+					includeAudio: shouldIncludeAudio,
+				},
+			});
+
+			if (result.cancelled) {
+				editor.project.clearExportState();
+				return;
+			}
+
+			if (result.success && result.buffer) {
+				downloadBuffer({
+					buffer: result.buffer,
+					filename: `${activeProject.metadata.name}${getExportFileExtension({
+						format,
+					})}`,
+					mimeType: getExportMimeType({ format }),
+				});
+				editor.project.clearExportState();
+				const timing = `Client export: total ${formatElapsed(performance.now() - startedAt)}`;
+				setLastTiming(timing);
+				console.info(`[OpenCut] ${timing}`);
+				return;
+			}
+
+			const message = result.success
+				? "Export did not return a file"
+				: result.error || "Export failed";
+			editor.project.clearExportState();
+			console.error("[OpenCut] Export failed", {
+				projectId: activeProject.metadata.id,
+				projectName: activeProject.metadata.name,
 				format,
 				quality,
-				fps: activeProject.settings.fps,
 				includeAudio: shouldIncludeAudio,
-			},
-		});
-
-		if (result.cancelled) {
-			clearClientExportTimer();
-			editor.project.clearExportState();
-			return;
-		}
-
-		if (result.success && result.buffer) {
-			downloadBuffer({
-				buffer: result.buffer,
-				filename: `${activeProject.metadata.name}${getExportFileExtension({
-					format,
-				})}`,
-				mimeType: getExportMimeType({ format }),
+				message,
 			});
+		} catch (error) {
 			editor.project.clearExportState();
-			const timing = `Client export: total ${formatElapsed(performance.now() - startedAt)}`;
-			setLastTiming(timing);
-			console.info(`[OpenCut] ${timing}`);
+			console.error("[OpenCut] Export failed", {
+				projectId: activeProject.metadata.id,
+				projectName: activeProject.metadata.name,
+				format,
+				quality,
+				includeAudio: shouldIncludeAudio,
+				error,
+			});
+		} finally {
 			clearClientExportTimer();
-			return;
 		}
-
-		const message = result.success
-			? "Export did not return a file"
-			: result.error || "Export failed";
-		setLastError(message);
-		clearClientExportTimer();
-		console.error("[OpenCut] Export failed", {
-			projectId: activeProject.metadata.id,
-			projectName: activeProject.metadata.name,
-			format,
-			quality,
-			includeAudio: shouldIncludeAudio,
-			message,
-		});
 	}, [
 		activeProject,
 		editor,
@@ -958,16 +966,6 @@ function ExportPopover() {
 				</div>
 			)}
 			<PopoverContent className="bg-background mr-4 flex w-80 flex-col p-0">
-			{(exportResult && !exportResult.success) || lastError ? (
-				<ExportError
-					error={
-						lastError ||
-						exportResult?.error ||
-						"Unknown error occurred"
-					}
-					onRetry={startExport}
-				/>
-			) : (
 				<>
 					<div className="flex items-center justify-between p-3 border-b">
 						<h3 className="font-medium text-sm">
@@ -1133,54 +1131,7 @@ function ExportPopover() {
 						</div>
 					</div>
 				</>
-			)}
 			</PopoverContent>
 		</>
-	);
-}
-
-function ExportError({
-	error,
-	onRetry,
-}: {
-	error: string;
-	onRetry: () => void;
-}) {
-	const [copied, setCopied] = useState(false);
-
-	const handleCopy = async () => {
-		await navigator.clipboard.writeText(error);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 1000);
-	};
-
-	return (
-		<div className="space-y-4 p-3">
-			<div className="flex flex-col gap-1.5">
-				<p className="text-destructive text-sm font-medium">Export failed</p>
-				<p className="text-muted-foreground text-xs">{error}</p>
-			</div>
-
-			<div className="flex gap-2">
-				<Button
-					variant="outline"
-					size="sm"
-					className="h-8 flex-1 text-xs"
-					onClick={handleCopy}
-				>
-					{copied ? <Check className="text-constructive" /> : <Copy />}
-					Copy
-				</Button>
-				<Button
-					variant="outline"
-					size="sm"
-					className="h-8 flex-1 text-xs"
-					onClick={onRetry}
-				>
-					<RotateCcw />
-					Retry
-				</Button>
-			</div>
-		</div>
 	);
 }
