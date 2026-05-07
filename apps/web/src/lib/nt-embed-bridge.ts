@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { EditorCore } from "@/core";
 import { useEditor } from "@/editor/use-editor";
+import { processMediaAssets } from "@/media/processing";
 import type { MediaAsset } from "@/media/types";
 import { storageService } from "@/services/storage/service";
 
@@ -34,9 +35,22 @@ type NtLoadProjectMessage = {
 	assets?: NtOpenCutAsset[];
 };
 
+type NtImportFilesMessage = {
+	type: "NT_OPENCUT_IMPORT_FILES";
+	files?: File[];
+};
+
 function isNtLoadProjectMessage(value: unknown): value is NtLoadProjectMessage {
 	if (typeof value !== "object" || value === null) return false;
 	if (!("type" in value) || value.type !== "NT_OPENCUT_LOAD_PROJECT") {
+		return false;
+	}
+	return true;
+}
+
+function isNtImportFilesMessage(value: unknown): value is NtImportFilesMessage {
+	if (typeof value !== "object" || value === null) return false;
+	if (!("type" in value) || value.type !== "NT_OPENCUT_IMPORT_FILES") {
 		return false;
 	}
 	return true;
@@ -133,12 +147,72 @@ export function useNtHostEmbedBridge(projectId: string) {
 		}
 	}, [postToParent, projectId]);
 
+	const importNtFiles = useCallback(async ({ files }: { files: File[] }) => {
+		if (!files.length) return;
+		const editor = EditorCore.getInstance();
+		postToParent({
+			type: "OPENCUT_ASSETS_SYNCING",
+			source: "opencut",
+			sessionId: projectId,
+			count: files.length,
+		});
+		try {
+			const processedAssets = await processMediaAssets({ files });
+			let importedCount = 0;
+			for (const asset of processedAssets) {
+				const imported = await editor.media.addMediaAsset({
+					projectId,
+					asset,
+				});
+				if (!imported) continue;
+				importedCount += 1;
+				postToParent({
+					type: "OPENCUT_ASSET_SYNCED",
+					source: "opencut",
+					sessionId: projectId,
+					assetId: imported.id,
+					count: importedCount,
+					total: processedAssets.length,
+				});
+			}
+			postToParent({
+				type: "OPENCUT_ASSETS_SYNCED",
+				source: "opencut",
+				sessionId: projectId,
+				count: importedCount,
+			});
+		} catch (err) {
+			console.error("[nt-embed] NT file import failed:", err);
+			postToParent({
+				type: "OPENCUT_ASSET_SYNC_ERROR",
+				source: "opencut",
+				sessionId: projectId,
+				message: err instanceof Error ? err.message : "Unknown error",
+			});
+		}
+	}, [postToParent, projectId]);
+
 	useEffect(() => {
 		if (!embed) return;
 
 		const onMessage = async (ev: MessageEvent) => {
 			if (targetOrigin !== "*" && ev.origin !== targetOrigin) return;
 			const raw: unknown = ev.data;
+			if (isNtImportFilesMessage(raw)) {
+				const files = Array.isArray(raw.files)
+					? raw.files.filter((file): file is File =>
+							file instanceof File ||
+							(
+								typeof file === "object" &&
+								file !== null &&
+								"name" in file &&
+								"arrayBuffer" in file
+							),
+						)
+					: [];
+				await importNtFiles({ files });
+				return;
+			}
 			if (!isNtLoadProjectMessage(raw)) return;
 
 			const projectJson = raw.projectJson;
@@ -174,7 +248,7 @@ export function useNtHostEmbedBridge(projectId: string) {
 
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [embed, postToParent, projectId, syncNtAssets, targetOrigin]);
+	}, [embed, importNtFiles, postToParent, projectId, syncNtAssets, targetOrigin]);
 
 	useEffect(() => {
 		if (!embed) return;
