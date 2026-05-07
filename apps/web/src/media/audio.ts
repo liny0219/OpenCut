@@ -252,6 +252,15 @@ async function resolveAudioBufferForAsset({
 	asset: MediaAsset;
 	audioContext: AudioContext;
 }): Promise<AudioBuffer | null> {
+	if (asset.file.size === 0) {
+		console.warn("Skipping audio decode for empty media asset:", {
+			id: asset.id,
+			name: asset.name,
+			remoteUrl: asset.remoteUrl,
+		});
+		return null;
+	}
+
 	if (asset.type === "audio") {
 		try {
 			const arrayBuffer = await asset.file.arrayBuffer();

@@ -9,9 +9,75 @@ import { formatTimecode } from "opencut-wasm";
 import { frameRateToFloat } from "@/fps/utils";
 import { downloadBlob } from "@/utils/browser";
 
+const AUDIO_PREP_TIMEOUT_MS = 120_000;
+
 type SnapshotResult =
 	| { success: true; blob: Blob; filename: string }
 	| { success: false; error: string };
+
+type CancellableTaskResult<T> =
+	| { status: "complete"; value: T }
+	| { status: "cancelled" };
+
+async function waitForCancellableTask<T>({
+	task,
+	onCancel,
+	onProgress,
+	initialProgress,
+	maxProgress,
+	timeoutMs,
+	timeoutMessage,
+}: {
+	task: Promise<T>;
+	onCancel?: () => boolean;
+	onProgress?: (args: { progress: number }) => void;
+	initialProgress: number;
+	maxProgress: number;
+	timeoutMs: number;
+	timeoutMessage: string;
+}): Promise<CancellableTaskResult<T>> {
+	let settled = false;
+	let progress = initialProgress;
+
+	return await new Promise<CancellableTaskResult<T>>((resolve, reject) => {
+		const cleanup = () => {
+			settled = true;
+			clearInterval(cancelTimer);
+			clearInterval(progressTimer);
+			clearTimeout(timeoutTimer);
+		};
+
+		const cancelTimer = setInterval(() => {
+			if (!onCancel?.()) return;
+			cleanup();
+			resolve({ status: "cancelled" });
+		}, 100);
+
+		const progressTimer = setInterval(() => {
+			if (settled) return;
+			progress = Math.min(maxProgress, progress + 0.01);
+			onProgress?.({ progress });
+		}, 1500);
+
+		const timeoutTimer = setTimeout(() => {
+			cleanup();
+			reject(new Error(timeoutMessage));
+		}, timeoutMs);
+
+		task.then(
+			(value) => {
+				if (settled) return;
+				cleanup();
+				resolve({ status: "complete", value });
+			},
+			(error: unknown) => {
+				if (settled) return;
+				cleanup();
+				reject(error);
+			},
+		);
+	});
+}
 
 export class RendererManager {
 	private renderTree: RootNode | null = null;
@@ -169,11 +235,24 @@ export class RendererManager {
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {
 				onProgress?.({ progress: 0.05 });
-				audioBuffer = await createTimelineAudioBuffer({
-					tracks,
-					mediaAssets,
-					duration,
+				const audioResult = await waitForCancellableTask({
+					task: createTimelineAudioBuffer({
+						tracks,
+						mediaAssets,
+						duration,
+					}),
+					onCancel,
+					onProgress,
+					initialProgress: 0.05,
+					maxProgress: 0.2,
+					timeoutMs: AUDIO_PREP_TIMEOUT_MS,
+					timeoutMessage:
+						"Audio preparation timed out. Try exporting again without audio, or remove unsupported audio/video clips.",
 				});
+				if (audioResult.status === "cancelled") {
+					return { success: false, cancelled: true };
+				}
+				audioBuffer = audioResult.value;
 			}
 
 			const scene = buildScene({

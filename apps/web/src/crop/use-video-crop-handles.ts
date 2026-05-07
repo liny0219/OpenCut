@@ -46,6 +46,7 @@ type DragState = {
 	startCanvasX: number;
 	startCanvasY: number;
 	startCrop: NormalizedSourceCrop;
+	startFullBounds: ElementBounds;
 };
 
 export function useVideoCropHandles() {
@@ -328,7 +329,7 @@ export function useVideoCropHandles() {
 			const d = canvasDeltaToNormalizedDelta({
 				canvasDx: pos.x - drag.startCanvasX,
 				canvasDy: pos.y - drag.startCanvasY,
-				fullBounds,
+				fullBounds: drag.startFullBounds,
 			});
 
 			const next = applyCropHandlePreview({
@@ -376,6 +377,7 @@ export function useVideoCropHandles() {
 				startCrop: readNormalizedSourceCropFromParams({
 					params: selectedVideo.element.params,
 				}),
+				startFullBounds: fullBounds,
 			};
 		},
 		[selectedVideo, fullBounds, viewport],
@@ -385,7 +387,7 @@ export function useVideoCropHandles() {
 
 	return {
 		selectedVideo: selectedVideo?.element ?? null,
-		fullBounds,
+		fullBounds: dragRef.current?.startFullBounds ?? fullBounds,
 		cropBounds,
 		decodedSize: decoded,
 		handleKindPointerDown,

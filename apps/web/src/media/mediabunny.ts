@@ -22,18 +22,6 @@ export type VideoFileData = {
 	thumbnailUrl: string | null;
 };
 
-function browserCanPlayVideoFile({ file }: { file: File }): boolean {
-	if (typeof document === "undefined") return false;
-	const video = document.createElement("video");
-	const types = [
-		file.type,
-		"video/mp4; codecs=\"avc1.42E01E\"",
-		"video/quicktime",
-	].filter(Boolean);
-
-	return types.some((type) => video.canPlayType(type) !== "");
-}
-
 export async function readVideoFile({
 	file,
 }: {
@@ -53,7 +41,6 @@ export async function readVideoFile({
 		}
 
 		const canDecode = await videoTrack.canDecode();
-		const canPreview = canDecode || browserCanPlayVideoFile({ file });
 		const packetStats = await videoTrack.computePacketStats(100);
 		const audioTrack = await input.getPrimaryAudioTrack();
 
@@ -83,7 +70,7 @@ export async function readVideoFile({
 			fps: packetStats.averagePacketRate,
 			hasAudio: audioTrack !== null,
 			codec: videoTrack.codec,
-			canDecode: canPreview,
+			canDecode,
 			thumbnailUrl,
 		};
 	} finally {
