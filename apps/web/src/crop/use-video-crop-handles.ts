@@ -368,20 +368,21 @@ export function useVideoCropHandles() {
 			});
 			if (!pos) return;
 
-			dragRef.current = {
-				trackId: selectedVideo.ref.trackId,
-				elementId: selectedVideo.ref.elementId,
-				kind,
-				startCanvasX: pos.x,
-				startCanvasY: pos.y,
-				startCrop: readNormalizedSourceCropFromParams({
-					params: selectedVideo.element.params,
-				}),
-				startFullBounds: fullBounds,
-			};
-		},
-		[selectedVideo, fullBounds, viewport],
-	);
+				dragRef.current = {
+					trackId: selectedVideo.ref.trackId,
+					elementId: selectedVideo.ref.elementId,
+					kind,
+					startCanvasX: pos.x,
+					startCanvasY: pos.y,
+					startCrop: readNormalizedSourceCropFromParams({
+						params: selectedVideo.element.params,
+					}),
+					startFullBounds: fullBounds,
+				};
+				bump();
+			},
+			[selectedVideo, fullBounds, viewport, bump],
+		);
 
 
 
