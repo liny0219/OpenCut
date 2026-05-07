@@ -2,10 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import type { EditorCore } from "@/core";
 import { MigrationDialog } from "@/project/components/migration-dialog";
 import { StoragePersistenceDialog } from "@/services/storage/components/storage-persistence-dialog";
@@ -36,7 +34,6 @@ import {
 	Calendar04Icon,
 	GridViewIcon,
 	LeftToRightListDashIcon,
-	PlusSignIcon,
 	Search01Icon,
 	Video01Icon,
 	MoreHorizontalIcon,
@@ -184,7 +181,6 @@ function ProjectsHeader() {
 
 				<div className="flex items-center gap-3 md:gap-4">
 					<SearchBar className="hidden md:block" />
-					<NewProjectButton />
 				</div>
 			</div>
 			<SearchBar className="block md:hidden mb-4" />
@@ -501,29 +497,6 @@ function SortDropdown({ children }: { children: React.ReactNode }) {
 				</DropdownMenuCheckboxItem>
 			</DropdownMenuContent>
 		</DropdownMenu>
-	);
-}
-
-function NewProjectButton() {
-	const editor = useEditor();
-	const router = useRouter();
-
-	const handleCreateProject = async () => {
-		const projectId = await editor.project.createNewProject({
-			name: "New project",
-		});
-		router.push(`/editor/${projectId}`);
-	};
-
-	return (
-		<Button
-			size="lg"
-			className="flex px-5 md:px-6"
-			onClick={handleCreateProject}
-		>
-			<span className="text-sm font-medium hidden md:block">New project</span>
-			<span className="text-sm font-medium block md:hidden">New</span>
-		</Button>
 	);
 }
 
@@ -949,23 +922,8 @@ function ProjectsSkeleton() {
 
 function EmptyState() {
 	const { searchQuery, setSearchQuery } = useProjectsStore();
-	const router = useRouter();
 	const editor = useEditor();
 	const savedProjects = editor.project.getSavedProjects();
-
-	const handleCreateProject = async () => {
-		try {
-			const projectId = await editor.project.createNewProject({
-				name: "New project",
-			});
-			router.push(`/editor/${projectId}`);
-		} catch (error) {
-			toast.error("Failed to create project", {
-				description:
-					error instanceof Error ? error.message : "Please try again",
-			});
-		}
-	};
 
 	if (savedProjects.length > 0) {
 		return (
@@ -1004,14 +962,9 @@ function EmptyState() {
 				</div>
 				<h3 className="text-lg font-medium">No projects yet</h3>
 				<p className="text-muted-foreground max-w-md">
-					Start creating your first project. Import media, edit, and export your
-					videos. All privately.
+					OpenCut projects are created from NT workflow video editing sessions.
 				</p>
 			</div>
-			<Button size="lg" className="gap-2" onClick={handleCreateProject}>
-				<HugeiconsIcon icon={PlusSignIcon} />
-				Create your first project
-			</Button>
 		</div>
 	);
 }

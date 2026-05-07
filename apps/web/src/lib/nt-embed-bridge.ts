@@ -4,7 +4,6 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { EditorCore } from "@/core";
 import { useEditor } from "@/editor/use-editor";
-import { processMediaAssets } from "@/media/processing";
 import type { MediaAsset } from "@/media/types";
 import { storageService } from "@/services/storage/service";
 
@@ -22,6 +21,11 @@ type NtOpenCutAsset = {
 	role?: string | null;
 	source?: string | null;
 };
+
+function getAssetSyncWeight(asset: NtOpenCutAsset): number {
+	const mediaWeight = asset.typeCode === "AUDIO" ? 0 : 1;
+	return mediaWeight * 1_000_000_000_000 + (asset.byteSize ?? 0);
+}
 
 type NtLoadProjectMessage = {
 	type: "NT_OPENCUT_LOAD_PROJECT";
@@ -66,38 +70,47 @@ export function useNtHostEmbedBridge(projectId: string) {
 		const editor = EditorCore.getInstance();
 		const existingIds = new Set(editor.media.getAssets().map((asset) => asset.id));
 		const importedAssets: MediaAsset[] = [];
+		let syncedCount = 0;
 
-		for (const ntAsset of assets) {
+		const sortedAssets = [...assets].sort(
+			(a, b) => getAssetSyncWeight(a) - getAssetSyncWeight(b),
+		);
+
+		for (const ntAsset of sortedAssets) {
 			const stableAssetId = `nt-${ntAsset.assetId}`;
 			if (existingIds.has(stableAssetId)) continue;
 			if (!ntAsset.downloadUrl) continue;
 
 			try {
-				const response = await fetch(ntAsset.downloadUrl);
-				if (!response.ok) {
-					throw new Error(`HTTP ${response.status}`);
-				}
-
-				const blob = await response.blob();
-				const file = new File([blob], ntAsset.fileName, {
-					type: ntAsset.mime || blob.type || undefined,
-					lastModified: Date.now(),
-				});
-				const [processed] = await processMediaAssets({ files: [file] });
-				if (!processed) continue;
-
 				const mediaAsset: MediaAsset = {
-					...processed,
 					id: stableAssetId,
-					duration: processed.duration ?? ntAsset.duration ?? undefined,
+					name: ntAsset.fileName,
+					type: ntAsset.typeCode === "AUDIO" ? "audio" : "video",
+					file: new File([], ntAsset.fileName, {
+						type: ntAsset.mime || undefined,
+						lastModified: Date.now(),
+					}),
+					duration: ntAsset.duration ?? undefined,
+					remoteUrl: ntAsset.downloadUrl,
 				};
 
-				await storageService.saveMediaAsset({
-					projectId,
-					mediaAsset,
-				});
 				importedAssets.push(mediaAsset);
 				existingIds.add(stableAssetId);
+				editor.media.setAssets({
+					assets: [...editor.media.getAssets(), mediaAsset],
+				});
+				editor.project.ratchetFpsForImportedMedia({
+					importedAssets: [mediaAsset],
+				});
+				syncedCount += 1;
+				postToParent({
+					type: "OPENCUT_ASSET_SYNCED",
+					source: "opencut",
+					sessionId: projectId,
+					assetId: ntAsset.assetId,
+					count: syncedCount,
+					total: sortedAssets.length,
+				});
 			} catch (err) {
 				console.error("[nt-embed] NT asset sync failed:", ntAsset, err);
 				postToParent({
@@ -111,12 +124,6 @@ export function useNtHostEmbedBridge(projectId: string) {
 		}
 
 		if (importedAssets.length > 0) {
-			editor.media.setAssets({
-				assets: [...editor.media.getAssets(), ...importedAssets],
-			});
-			editor.project.ratchetFpsForImportedMedia({
-				importedAssets,
-			});
 			postToParent({
 				type: "OPENCUT_ASSETS_SYNCED",
 				source: "opencut",
@@ -147,9 +154,18 @@ export function useNtHostEmbedBridge(projectId: string) {
 				}
 				await editor.project.loadProject({ id: projectId });
 				if (Array.isArray(raw.assets)) {
-					assetSyncRef.current = syncNtAssets({ assets: raw.assets });
-					await assetSyncRef.current;
-					assetSyncRef.current = null;
+					postToParent({
+						type: "OPENCUT_ASSETS_SYNCING",
+						source: "opencut",
+						sessionId: projectId,
+						count: raw.assets.length,
+					});
+					assetSyncRef.current = syncNtAssets({ assets: raw.assets }).finally(
+						() => {
+							assetSyncRef.current = null;
+						},
+					);
+					void assetSyncRef.current;
 				}
 			} catch (err) {
 				console.error("[nt-embed] NT_OPENCUT_LOAD_PROJECT failed:", err);
@@ -158,7 +174,7 @@ export function useNtHostEmbedBridge(projectId: string) {
 
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [embed, projectId, syncNtAssets, targetOrigin]);
+	}, [embed, postToParent, projectId, syncNtAssets, targetOrigin]);
 
 	useEffect(() => {
 		if (!embed) return;
@@ -179,9 +195,6 @@ export function useNtHostEmbedBridge(projectId: string) {
 
 		const sendSavedProject = async () => {
 			try {
-				if (assetSyncRef.current) {
-					await assetSyncRef.current;
-				}
 				const serialized = await storageService.getSerializedProject({
 					id: projectId,
 				});

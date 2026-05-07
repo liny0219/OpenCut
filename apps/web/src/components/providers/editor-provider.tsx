@@ -14,6 +14,7 @@ import {
 	initializeGpuRenderer,
 	isGpuAvailable,
 } from "@/services/renderer/gpu-renderer";
+import { storageService } from "@/services/storage/service";
 
 interface EditorProviderProps {
 	projectId: string;
@@ -34,12 +35,23 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 	useEffect(() => {
 		let cancelled = false;
 		const editor = EditorCore.getInstance();
+		const embed =
+			typeof window !== "undefined" &&
+			new URLSearchParams(window.location.search).get("embed") === "1";
 
 		const loadProject = async () => {
 			try {
 				setIsLoading(true);
 				await initializeGpuRenderer();
 				editor.renderer.setDegraded(!isGpuAvailable());
+				const cacheResetKey = `nt-remote-media-cache-reset-v1:${projectId}`;
+				if (embed && window.localStorage.getItem(cacheResetKey) !== "1") {
+					await storageService.deleteProjectMediaByPrefix({
+						projectId,
+						prefix: "nt-",
+					});
+					window.localStorage.setItem(cacheResetKey, "1");
+				}
 				await editor.project.loadProject({ id: projectId });
 
 				if (cancelled) return;
@@ -53,10 +65,6 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 					err instanceof Error &&
 					(err.message.includes("not found") ||
 						err.message.includes("does not exist"));
-
-				const embed =
-					typeof window !== "undefined" &&
-					new URLSearchParams(window.location.search).get("embed") === "1";
 
 				if (isNotFound && embed) {
 					try {

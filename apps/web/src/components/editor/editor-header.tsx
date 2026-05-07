@@ -16,7 +16,6 @@ import { DeleteProjectDialog } from "@/project/components/delete-project-dialog"
 import { useRouter } from "next/navigation";
 import { FaDiscord } from "react-icons/fa6";
 import { ExportButton } from "./export-button";
-import { FeedbackPopover } from "@/feedback/components/feedback-popover";
 import { ThemeToggle } from "../theme-toggle";
 import { DEFAULT_LOGO_URL } from "@/site/brand";
 import { SOCIAL_LINKS } from "@/site/social";
@@ -38,7 +37,6 @@ export function EditorHeader() {
 			</div>
 			<nav className="flex items-center gap-2">
 				<NtFullscreenExitButton />
-				<FeedbackPopover />
 				<ExportButton />
 				<ThemeToggle />
 			</nav>
@@ -106,6 +104,8 @@ function NtFullscreenExitButton() {
 }
 
 function ProjectDropdown() {
+	const searchParams = useSearchParams();
+	const embed = searchParams.get("embed") === "1";
 	const [openDialog, setOpenDialog] = useState<
 		"delete" | "rename" | "shortcuts" | null
 	>(null);
@@ -113,6 +113,8 @@ function ProjectDropdown() {
 	const router = useRouter();
 	const editor = useEditor();
 	const activeProject = useEditor((e) => e.project.getActive());
+
+	if (embed) return null;
 
 	const handleExit = async () => {
 		if (isExiting) return;
@@ -233,6 +235,8 @@ function ProjectDropdown() {
 }
 
 function EditableProjectName() {
+	const searchParams = useSearchParams();
+	const embed = searchParams.get("embed") === "1";
 	const editor = useEditor();
 	const activeProject = useEditor((e) => e.project.getActive());
 	const [isEditing, setIsEditing] = useState(false);
@@ -240,6 +244,8 @@ function EditableProjectName() {
 	const originalNameRef = useRef("");
 
 	const projectName = activeProject?.metadata.name || "";
+
+	if (embed) return null;
 
 	const startEditing = () => {
 		if (isEditing) return;

@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
 import { MediaDragOverlay } from "@/components/editor/panels/assets/drag-overlay";
@@ -25,6 +26,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Spinner } from "@/components/ui/spinner";
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import { mediaTimeFromSeconds, type MediaTime } from "@/wasm";
 import { useEditor } from "@/editor/use-editor";
@@ -32,6 +34,7 @@ import { useFileUpload } from "@/media/use-file-upload";
 import { invokeAction } from "@/actions";
 import { processMediaAssets } from "@/media/processing";
 import { showMediaUploadToast } from "@/media/upload-toast";
+import { storageService } from "@/services/storage/service";
 import {
 	SelectableItem,
 	SelectableSurface,
@@ -50,6 +53,7 @@ import type { MediaAsset } from "@/media/types";
 import { cn } from "@/utils/ui";
 import {
 	CloudUploadIcon,
+	Download04Icon,
 	GridViewIcon,
 	LeftToRightListDashIcon,
 	SortingOneNineIcon,
@@ -63,6 +67,8 @@ export function MediaView() {
 	const editor = useEditor();
 	const mediaFiles = useEditor((e) => e.media.getAssets());
 	const activeProject = useEditor((e) => e.project.getActive());
+	const searchParams = useSearchParams();
+	const isNtEmbed = searchParams.get("embed") === "1";
 
 	const {
 		mediaViewMode,
@@ -198,6 +204,7 @@ export function MediaView() {
 						mediaViewMode={mediaViewMode}
 						setMediaViewMode={setMediaViewMode}
 						isProcessing={isProcessing}
+						allowImport={true}
 						sortBy={mediaSortBy}
 						sortOrder={mediaSortOrder}
 						onSort={handleSort}
@@ -252,22 +259,111 @@ function MediaAssetDraggable({
 	isRounded?: boolean;
 }) {
 	const editor = useEditor();
+	const activeProject = useEditor((e) => e.project.getActive());
+	const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
+		null,
+	);
+	const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
 
-	const addElementAtTime = ({
+	const materializeRemoteAsset = async ({ asset }: { asset: MediaAsset }) => {
+		if (!asset.remoteUrl) return asset;
+		if (downloadingAssetId === asset.id) return null;
+		if (!activeProject) {
+			toast.error("No active project");
+			return null;
+		}
+
+		setDownloadingAssetId(asset.id);
+		setDownloadProgress(null);
+		try {
+			const response = await fetch(asset.remoteUrl);
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}`);
+			}
+			const contentLength = Number(response.headers.get("content-length"));
+			let blob: Blob;
+			if (response.body && Number.isFinite(contentLength) && contentLength > 0) {
+				const reader = response.body.getReader();
+				const chunks: BlobPart[] = [];
+				let received = 0;
+
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					if (!value) continue;
+					chunks.push(
+						value.buffer.slice(
+							value.byteOffset,
+							value.byteOffset + value.byteLength,
+						) as ArrayBuffer,
+					);
+					received += value.byteLength;
+					setDownloadProgress(
+						Math.min(99, Math.round((received / contentLength) * 100)),
+					);
+				}
+
+				blob = new Blob(chunks, {
+					type: response.headers.get("content-type") || undefined,
+				});
+			} else {
+				blob = await response.blob();
+			}
+			setDownloadProgress(100);
+			const file = new File([blob], asset.name, {
+				type: blob.type || asset.file.type || undefined,
+				lastModified: Date.now(),
+			});
+			const [processed] = await processMediaAssets({ files: [file] });
+			if (!processed) {
+				throw new Error("Could not process remote media");
+			}
+
+			const localAsset: MediaAsset = {
+				...processed,
+				id: asset.id,
+				duration: processed.duration ?? asset.duration,
+			};
+			await storageService.saveMediaAsset({
+				projectId: activeProject.metadata.id,
+				mediaAsset: localAsset,
+			});
+			editor.media.setAssets({
+				assets: editor
+					.media
+					.getAssets()
+					.map((item) => (item.id === asset.id ? localAsset : item)),
+			});
+			return localAsset;
+		} catch (error) {
+			console.error("Failed to download remote media:", error);
+			toast.error(`Failed to download ${asset.name}`, {
+				description: error instanceof Error ? error.message : undefined,
+			});
+			return null;
+		} finally {
+			setDownloadingAssetId(null);
+			setDownloadProgress(null);
+		}
+	};
+
+	const addElementAtTime = async ({
 		asset,
 		startTime,
 	}: {
 		asset: MediaAsset;
 		startTime: MediaTime;
 	}) => {
+		const readyAsset = await materializeRemoteAsset({ asset });
+		if (!readyAsset) return;
 		const duration =
-			asset.duration != null
-				? mediaTimeFromSeconds({ seconds: asset.duration })
+			readyAsset.duration != null
+				? mediaTimeFromSeconds({ seconds: readyAsset.duration })
 				: DEFAULT_NEW_ELEMENT_DURATION;
 		const element = buildElementFromMedia({
-			mediaId: asset.id,
-			mediaType: asset.type,
-			name: asset.name,
+			mediaId: readyAsset.id,
+			mediaType: readyAsset.type,
+			name: readyAsset.name,
 			duration,
 			startTime,
 		});
@@ -280,7 +376,20 @@ function MediaAssetDraggable({
 	return (
 		<DraggableItem
 			name={item.name}
-			preview={preview}
+			preview={
+				<div className="relative size-full">
+					{preview}
+					{downloadingAssetId === item.id ? (
+						<div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-background/80 text-xs text-muted-foreground backdrop-blur-sm">
+							<Spinner className="size-4" />
+							<span>Loading</span>
+							{downloadProgress != null ? (
+								<span>{downloadProgress}%</span>
+							) : null}
+						</div>
+					) : null}
+				</div>
+			}
 			dragData={{
 				id: item.id,
 				type: "media",
@@ -291,8 +400,9 @@ function MediaAssetDraggable({
 				}),
 			}}
 			shouldShowPlusOnDrag={false}
+			isDraggable={!item.remoteUrl && downloadingAssetId !== item.id}
 			onAddToTimeline={({ currentTime }) =>
-				addElementAtTime({ asset: item, startTime: currentTime })
+				void addElementAtTime({ asset: item, startTime: currentTime })
 			}
 			variant={variant}
 			isRounded={isRounded}
@@ -423,7 +533,7 @@ function MediaTypePlaceholder({
 	return (
 		<div
 			className={cn(
-				"text-muted-foreground flex size-full flex-col items-center justify-center rounded",
+				"text-muted-foreground relative flex size-full flex-col items-center justify-center rounded",
 				variant === "muted" ? "bg-muted/30" : "border",
 			)}
 		>
@@ -442,6 +552,11 @@ function MediaPreview({
 	variant?: "grid" | "compact";
 }) {
 	const shouldShowDurationBadge = variant === "grid";
+	const remoteBadge = item.remoteUrl ? (
+		<div className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[0.65rem] leading-none text-white">
+			Server
+		</div>
+	) : null;
 
 	if (item.type === "image") {
 		return (
@@ -455,6 +570,7 @@ function MediaPreview({
 					loading="lazy"
 					unoptimized
 				/>
+				{remoteBadge}
 			</div>
 		);
 	}
@@ -475,28 +591,35 @@ function MediaPreview({
 					{shouldShowDurationBadge ? (
 						<MediaDurationBadge duration={item.duration} />
 					) : null}
+					{remoteBadge}
 				</div>
 			);
 		}
 
 		return (
-			<MediaTypePlaceholder
-				icon={Video01Icon}
-				label="Video"
-				duration={item.duration}
-				variant="muted"
-			/>
+			<div className="relative size-full">
+				<MediaTypePlaceholder
+					icon={item.remoteUrl ? Download04Icon : Video01Icon}
+					label={item.remoteUrl ? "Server video" : "Video"}
+					duration={item.duration}
+					variant="muted"
+				/>
+				{remoteBadge}
+			</div>
 		);
 	}
 
 	if (item.type === "audio") {
 		return (
-			<MediaTypePlaceholder
-				icon={MusicNote03Icon}
-				label="Audio"
-				duration={item.duration}
-				variant="bordered"
-			/>
+			<div className="relative size-full">
+				<MediaTypePlaceholder
+					icon={item.remoteUrl ? Download04Icon : MusicNote03Icon}
+					label={item.remoteUrl ? "Server audio" : "Audio"}
+					duration={item.duration}
+					variant="bordered"
+				/>
+				{remoteBadge}
+			</div>
 		);
 	}
 
@@ -509,6 +632,7 @@ function MediaActions({
 	mediaViewMode,
 	setMediaViewMode,
 	isProcessing,
+	allowImport,
 	sortBy,
 	sortOrder,
 	onSort,
@@ -517,6 +641,7 @@ function MediaActions({
 	mediaViewMode: MediaViewMode;
 	setMediaViewMode: (mode: MediaViewMode) => void;
 	isProcessing: boolean;
+	allowImport: boolean;
 	sortBy: MediaSortKey;
 	sortOrder: MediaSortOrder;
 	onSort: ({ key }: { key: MediaSortKey }) => void;
@@ -604,16 +729,18 @@ function MediaActions({
 					</TooltipContent>
 				</Tooltip>
 			</TooltipProvider>
-			<Button
-				variant="outline"
-				onClick={onImport}
-				disabled={isProcessing}
-				size="sm"
-				className="items-center justify-center gap-1.5"
-			>
-				<HugeiconsIcon icon={CloudUploadIcon} />
-				Import
-			</Button>
+			{allowImport ? (
+				<Button
+					variant="outline"
+					onClick={onImport}
+					disabled={isProcessing}
+					size="sm"
+					className="items-center justify-center gap-1.5"
+				>
+					<HugeiconsIcon icon={CloudUploadIcon} />
+					Import
+				</Button>
+			) : null}
 		</div>
 	);
 }

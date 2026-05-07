@@ -2,6 +2,7 @@ import type { TProject, TProjectMetadata } from "@/project/types";
 import { getProjectDurationFromScenes } from "@/timeline/scenes";
 import type { MediaAsset } from "@/media/types";
 import { IndexedDBAdapter } from "./indexeddb-adapter";
+import { IndexedDBFileAdapter } from "./indexeddb-file-adapter";
 import { OPFSAdapter } from "./opfs-adapter";
 import {
 	type StorageCapacityCheckResult,
@@ -97,7 +98,13 @@ class StorageService {
 			version: this.config.version,
 		});
 
-		const mediaAssetsAdapter = new OPFSAdapter(`media-files-${projectId}`);
+		const mediaAssetsAdapter = OPFSAdapter.isSupported()
+			? new OPFSAdapter(`media-files-${projectId}`)
+			: new IndexedDBFileAdapter({
+					dbName: `${this.config.mediaDb}-files-${projectId}`,
+					storeName: "files",
+					version: this.config.version,
+				});
 
 		return { mediaMetadataAdapter, mediaAssetsAdapter };
 	}
@@ -459,6 +466,27 @@ class StorageService {
 			mediaMetadataAdapter.clear(),
 			mediaAssetsAdapter.clear(),
 		]);
+	}
+
+	async deleteProjectMediaByPrefix({
+		projectId,
+		prefix,
+	}: {
+		projectId: string;
+		prefix: string;
+	}): Promise<void> {
+		const { mediaMetadataAdapter, mediaAssetsAdapter } =
+			this.getProjectMediaAdapters({ projectId });
+
+		const mediaIds = await mediaMetadataAdapter.list();
+		const matchingIds = mediaIds.filter((id) => id.startsWith(prefix));
+
+		await Promise.all(
+			matchingIds.flatMap((id) => [
+				mediaMetadataAdapter.remove(id),
+				mediaAssetsAdapter.remove(id),
+			]),
+		);
 	}
 
 	async clearAllData(): Promise<void> {

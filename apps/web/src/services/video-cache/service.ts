@@ -15,7 +15,6 @@ interface VideoSinkData {
 	lastTime: number;
 	prefetching: boolean;
 	prefetchPromise: Promise<void> | null;
-	/** Last decoded output canvas size (same space as `drawImage` in the compositor). */
 	decodedCanvasWidth: number | null;
 	decodedCanvasHeight: number | null;
 }
@@ -26,11 +25,6 @@ export class VideoCache {
 	private frameChain = new Map<string, Promise<unknown>>();
 	private seekGenerations = new Map<string, number>();
 
-	/**
-	 * Pixel size of the decoder output canvas for this asset. Uses CanvasSink
-	 * default `fit: "fill"` so frames fill the canvas (no letterboxing). Matches
-	 * `frame.canvas` used for source crop in the compositor.
-	 */
 	getDecodedCanvasSize({
 		mediaId,
 	}: {
@@ -57,16 +51,13 @@ export class VideoCache {
 		sinkData: VideoSinkData;
 		frame: WrappedCanvas | null;
 	}) {
-		if (!frame) {
-			return;
-		}
+		if (!frame) return;
 		const { width, height } = frame.canvas;
-		if (width <= 0 || height <= 0) {
-			return;
-		}
-		const prevW = sinkData.decodedCanvasWidth;
-		const prevH = sinkData.decodedCanvasHeight;
-		if (prevW === width && prevH === height) {
+		if (width <= 0 || height <= 0) return;
+		if (
+			sinkData.decodedCanvasWidth === width &&
+			sinkData.decodedCanvasHeight === height
+		) {
 			return;
 		}
 		sinkData.decodedCanvasWidth = width;
@@ -84,7 +75,6 @@ export class VideoCache {
 		}
 	}
 
-	/** Lets React layers (crop overlay, bounds) re-read after the first decoded frame. */
 	subscribeDecodedCanvasSize(listener: () => void): () => void {
 		this.decodedCanvasSizeListeners.add(listener);
 		return () => this.decodedCanvasSizeListeners.delete(listener);
@@ -367,6 +357,7 @@ export class VideoCache {
 
 			const sink = new CanvasSink(videoTrack, {
 				poolSize: 3,
+				fit: "contain",
 			});
 
 			this.sinks.set(mediaId, {

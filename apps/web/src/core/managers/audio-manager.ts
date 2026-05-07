@@ -460,6 +460,7 @@ export class AudioManager {
 		clip: AudioClipSource;
 	}): boolean {
 		return (
+			clip.file.type.startsWith("audio/") ||
 			this.hasCurveRetime({ clip }) ||
 			hasAnimatedVolume({ element: clip.timelineElement }) ||
 			shouldMaintainPitch({
@@ -592,6 +593,15 @@ export class AudioManager {
 		const audioContext = this.ensureAudioContext();
 		if (!audioContext) {
 			return null;
+		}
+
+		if (clip.file.type.startsWith("audio/")) {
+			try {
+				const arrayBuffer = await clip.file.arrayBuffer();
+				return await audioContext.decodeAudioData(arrayBuffer.slice(0));
+			} catch (error) {
+				console.warn("Failed to decode audio clip with WebAudio:", error);
+			}
 		}
 
 		const input = new Input({
