@@ -7,6 +7,11 @@ import { useEditor } from "@/editor/use-editor";
 import { processMediaAssets } from "@/media/processing";
 import type { MediaAsset } from "@/media/types";
 import { storageService } from "@/services/storage/service";
+import {
+	applyNtAiEditPlan,
+	buildNtAiEditContext,
+	NtAiEditPlanError,
+} from "./nt-ai-edit-plan";
 
 type SerializedProject = import("@/services/storage/types").SerializedProject;
 
@@ -40,6 +45,19 @@ type NtImportFilesMessage = {
 	files?: File[];
 };
 
+type NtGetAiContextMessage = {
+	type: "NT_OPENCUT_GET_AI_CONTEXT";
+	requestId?: string;
+	sessionId?: string;
+};
+
+type NtApplyAiEditPlanMessage = {
+	type: "NT_OPENCUT_APPLY_AI_EDIT_PLAN";
+	requestId?: string;
+	sessionId?: string;
+	editPlan?: unknown;
+};
+
 function isNtLoadProjectMessage(value: unknown): value is NtLoadProjectMessage {
 	if (typeof value !== "object" || value === null) return false;
 	if (!("type" in value) || value.type !== "NT_OPENCUT_LOAD_PROJECT") {
@@ -51,6 +69,22 @@ function isNtLoadProjectMessage(value: unknown): value is NtLoadProjectMessage {
 function isNtImportFilesMessage(value: unknown): value is NtImportFilesMessage {
 	if (typeof value !== "object" || value === null) return false;
 	if (!("type" in value) || value.type !== "NT_OPENCUT_IMPORT_FILES") {
+		return false;
+	}
+	return true;
+}
+
+function isNtGetAiContextMessage(value: unknown): value is NtGetAiContextMessage {
+	if (typeof value !== "object" || value === null) return false;
+	if (!("type" in value) || value.type !== "NT_OPENCUT_GET_AI_CONTEXT") {
+		return false;
+	}
+	return true;
+}
+
+function isNtApplyAiEditPlanMessage(value: unknown): value is NtApplyAiEditPlanMessage {
+	if (typeof value !== "object" || value === null) return false;
+	if (!("type" in value) || value.type !== "NT_OPENCUT_APPLY_AI_EDIT_PLAN") {
 		return false;
 	}
 	return true;
@@ -198,6 +232,55 @@ export function useNtHostEmbedBridge(projectId: string) {
 		const onMessage = async (ev: MessageEvent) => {
 			if (targetOrigin !== "*" && ev.origin !== targetOrigin) return;
 			const raw: unknown = ev.data;
+			if (isNtGetAiContextMessage(raw)) {
+				postToParent({
+					type: "OPENCUT_AI_CONTEXT",
+					source: "opencut",
+					requestId: raw.requestId,
+					...buildNtAiEditContext({
+						editor: EditorCore.getInstance(),
+						sessionId: projectId,
+					}),
+				});
+				return;
+			}
+			if (isNtApplyAiEditPlanMessage(raw)) {
+				try {
+					if (raw.sessionId && raw.sessionId !== projectId) {
+						throw new NtAiEditPlanError("AI edit plan session mismatch");
+					}
+					const result = await applyNtAiEditPlan({
+						editor: EditorCore.getInstance(),
+						editPlan: raw.editPlan,
+					});
+					const serialized = await storageService.getSerializedProject({
+						id: projectId,
+					});
+					postToParent({
+						type: "OPENCUT_AI_EDIT_APPLIED",
+						source: "opencut",
+						requestId: raw.requestId,
+						sessionId: projectId,
+						summary: result.summary,
+						appliedActions: result.appliedActions,
+						projectJson: serialized,
+					});
+				} catch (err) {
+					console.error("[nt-embed] NT_OPENCUT_APPLY_AI_EDIT_PLAN failed:", err);
+					postToParent({
+						type: "OPENCUT_AI_EDIT_FAILED",
+						source: "opencut",
+						requestId: raw.requestId,
+						sessionId: projectId,
+						message: err instanceof Error ? err.message : "Unknown error",
+						failedActionIndex:
+							err instanceof NtAiEditPlanError
+								? err.failedActionIndex
+								: undefined,
+					});
+				}
+				return;
+			}
 			if (isNtImportFilesMessage(raw)) {
 				const files = Array.isArray(raw.files)
 					? raw.files.filter((file): file is File =>
